@@ -1,2 +1,0 @@
-labquake_explorer
-tests
