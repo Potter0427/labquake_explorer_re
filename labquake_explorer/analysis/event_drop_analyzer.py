@@ -268,22 +268,6 @@ def analyze_single_event(
     row['delta_lvdt'] = abs(res_lvdt['delta']) if res_lvdt['valid'] else np.nan
     row['lvdt_res'] = res_lvdt
 
-    # --- k (stiffness): slope of tau vs. LVDT in pre-trigger window ---
-    # k represents the effective system stiffness during the locking phase
-    # before each rupture event.
-    row['k'] = np.nan
-    pre_win = config.get('pre_win', (-1.0, -0.5))
-    pre_mask = (t_rel >= pre_win[0]) & (t_rel <= pre_win[1])
-    if np.sum(pre_mask) > 5:
-        tau_pre = tau_sm[pre_mask]
-        lvdt_pre = lvdt_0[pre_mask]
-        try:
-            # Linear regression: tau = k * lvdt + b
-            coeffs = np.polyfit(lvdt_pre, tau_pre, 1)
-            row['k'] = coeffs[0]  # slope = stiffness
-        except Exception:
-            pass
-
     # --- D values ---
     row['D_Push'] = np.nan
     row['D_max'] = np.nan

@@ -204,3 +204,45 @@ def run_batch_analysis(
             progress_callback(i + 1, n)
 
     return results_to_arrays(results)
+
+
+def run_batch_k_analysis(
+    time_history: Dict[str, np.ndarray],
+    events: List[Dict],
+    config: dict,
+    output_dir: Optional[str] = None,
+    progress_callback=None,
+) -> Dict[str, np.ndarray]:
+    """
+    Run K stiffness analysis on all events, generate diagnostic plots.
+    """
+    from labquake_explorer.analysis.k_stiffness_analyzer import (
+        analyze_single_k,
+        k_results_to_arrays,
+        generate_k_diagnostic_plot,
+    )
+
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    results = []
+    n = len(events)
+    skip_list = config.get('skip_events', [])
+
+    for i in range(n):
+        row = analyze_single_k(time_history, events, i, config)
+        results.append(row)
+
+        if output_dir and i not in skip_list and not row.get('skipped', False):
+            save_path = os.path.join(output_dir, f"Event_{i:03d}_k.png")
+            try:
+                generate_k_diagnostic_plot(
+                    time_history, events, i, row, config, save_path
+                )
+            except Exception as e:
+                print(f"Warning: failed to generate K plot for event {i}: {e}")
+
+        if progress_callback:
+            progress_callback(i + 1, n)
+
+    return k_results_to_arrays(results)

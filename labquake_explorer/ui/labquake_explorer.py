@@ -13,7 +13,7 @@ from labquake_explorer.ui.views import (
     SimplePlotView, PointsSelectorView, IndexPickerView,
     SlopeAnalyzerView, DynamicStrainArrivalPickerView, CZMFitterView,
     EventAnalyzerView, TimeHistoryView, ColoredLinesView,
-    SummaryAnalysisView, EventDropEditorView
+    SummaryAnalysisView, EventDropEditorView, EventKEditorView
 )
 
 class LabquakeExplorer:
@@ -68,11 +68,13 @@ class LabquakeExplorer:
         self.time_history_menu.add_command(label="Preview Time History", command=self.preview_time_history)
         self.time_history_menu.add_command(label="Colored Lines", command=self.preview_colored_lines)
         self.time_history_menu.add_command(label="Run Drop Analysis", command=self.run_drop_analysis)
+        self.time_history_menu.add_command(label="Run K Analysis", command=self.run_k_analysis)
         self.time_history_menu.add_command(label="Summary Analysis", command=self.preview_summary_analysis)
 
         self.event_menu = tk.Menu(self.root, tearoff=0)
         self.event_menu.add_command(label="Analyze Event", command=self.analyze_event)
         self.event_menu.add_command(label="Edit Event Drop", command=self.edit_event_drop)
+        self.event_menu.add_command(label="Edit Event K", command=self.edit_event_k)
         self.event_menu.add_command(label="Pick Arrivals", command=self.pick_strain_array_arrivals)
         self.event_menu.add_command(label="Fit Cohesive Zone Model", command=self.fit_cohesive_zone_model)
 
@@ -516,7 +518,7 @@ class LabquakeExplorer:
                 run_name_raw = run_data.get('name', f'run{run_idx+1}')
                 # Extract run number: "run4_8MPa" -> "run4"
                 run_part = run_name_raw.split('_')[0] if '_' in run_name_raw else run_name_raw
-                default_output = os.path.join(h5_dir, f"{h5_stem}_{run_part}")
+                default_output = os.path.join(h5_dir, f"{h5_stem}_{run_part}_drop")
             except Exception:
                 default_output = os.path.join(h5_dir, f"{h5_stem}_run{run_idx+1}")
 
@@ -604,6 +606,163 @@ class LabquakeExplorer:
         view = EventDropEditorView(self, run_idx, event_idx)
         self.set_window_icon(view)
         self.child_windows.append(view)
+
+    def edit_event_k(self):
+        path, item = self.get_full_path()
+        run_start = path.find('runs/[') + 6
+        run_end = path.find(']', run_start)
+        run_idx = int(path[run_start:run_end])
+
+        event_start = path.find('events/[') + 8
+        event_end = path.find(']', event_start)
+        event_idx = int(path[event_start:event_end])
+
+        view = EventKEditorView(self, run_idx, event_idx)
+        self.set_window_icon(view)
+        self.child_windows.append(view)
+
+    def run_k_analysis(self):
+        """Run batch K stiffness analysis on all events."""
+        from labquake_explorer.analysis.batch_runner import run_batch_k_analysis
+        from labquake_explorer.analysis.k_stiffness_analyzer import DEFAULT_K_CONFIG
+        import os
+
+        path, item = self.get_full_path()
+        if item != "time history":
+            return
+        run_start = path.find('runs/[') + 6
+        run_end = path.find(']', run_start)
+        run_idx = int(path[run_start:run_end])
+
+        time_history = self.data_manager.get_data(path)
+        events = self.data_manager.get_data(f"runs/[{run_idx}]/events")
+
+        if not time_history or not events:
+            messagebox.showerror("Error", "Cannot load data")
+            return
+
+        if isinstance(events, dict):
+            events = [events[k] for k in sorted(events.keys())]
+
+        # Configuration dialog
+        config_win = tk.Toplevel(self.root)
+        config_win.title("K Stiffness Analysis Configuration")
+        config_win.grab_set()
+
+        cfg = dict(DEFAULT_K_CONFIG)
+        # Load existing k_analysis config
+        try:
+            existing = self.data_manager.get_data(f"runs/[{run_idx}]/k_analysis")
+            if isinstance(existing, dict) and 'config' in existing:
+                old_cfg = existing['config']
+                if isinstance(old_cfg, dict):
+                    for k in ['k_pre_start', 'k_pre_end', 'k_window_sec', 'k_highpass_freq']:
+                        if k in old_cfg:
+                            cfg[k] = float(old_cfg[k])
+                    if 'k_smooth_w' in old_cfg:
+                        cfg['k_smooth_w'] = int(old_cfg['k_smooth_w'])
+                    if 'skip_events' in old_cfg:
+                        se = old_cfg['skip_events']
+                        if hasattr(se, 'tolist'): se = se.tolist()
+                        if isinstance(se, (list, tuple)):
+                            cfg['skip_events'] = [int(x) for x in se]
+        except Exception:
+            pass
+
+        row = 0
+        entries = {}
+        for label, key, default in [
+            ("Pre start (s)", 'k_pre_start', cfg['k_pre_start']),
+            ("Pre end (s)", 'k_pre_end', cfg['k_pre_end']),
+            ("Smooth window", 'k_smooth_w', cfg['k_smooth_w']),
+            ("Highpass freq (Hz, 0=off)", 'k_highpass_freq', cfg['k_highpass_freq']),
+        ]:
+            ttk.Label(config_win, text=label).grid(row=row, column=0, padx=5, pady=3, sticky='w')
+            var = tk.StringVar(value=str(default))
+            ttk.Entry(config_win, textvariable=var, width=10).grid(row=row, column=1, padx=5, pady=3)
+            entries[key] = var
+            row += 1
+
+        ttk.Label(config_win, text="Skip events (comma-sep):").grid(row=row, column=0, padx=5, pady=3, sticky='w')
+        initial_skip = ",".join(map(str, cfg.get('skip_events', [])))
+        skip_var = tk.StringVar(value=initial_skip)
+        ttk.Entry(config_win, textvariable=skip_var, width=60).grid(row=row, column=1, padx=5, pady=3)
+        row += 1
+
+        # Output folder
+        default_output = ""
+        if self.data_manager.data_path:
+            h5_path = self.data_manager.data_path
+            h5_dir = str(h5_path.parent)
+            h5_stem = h5_path.stem
+            try:
+                run_data = self.data_manager.get_data(f"runs/[{run_idx}]")
+                run_name_raw = run_data.get('name', f'run{run_idx+1}')
+                run_part = run_name_raw.split('_')[0] if '_' in run_name_raw else run_name_raw
+                default_output = os.path.join(h5_dir, f"{h5_stem}_{run_part}_k")
+            except Exception:
+                default_output = os.path.join(h5_dir, f"{h5_stem}_run{run_idx+1}_k")
+
+        ttk.Label(config_win, text="Output folder:").grid(row=row, column=0, padx=5, pady=3, sticky='w')
+        out_var = tk.StringVar(value=default_output)
+        ttk.Entry(config_win, textvariable=out_var, width=50).grid(row=row, column=1, padx=5, pady=3)
+        row += 1
+
+        def on_run():
+            cfg['k_pre_start'] = float(entries['k_pre_start'].get())
+            cfg['k_pre_end'] = float(entries['k_pre_end'].get())
+            cfg['k_smooth_w'] = int(entries['k_smooth_w'].get())
+            cfg['k_highpass_freq'] = float(entries['k_highpass_freq'].get())
+
+            # Auto-set window_sec to cover the full pre range
+            cfg['k_window_sec'] = abs(cfg['k_pre_start']) + 0.5
+
+            skip_str = skip_var.get().strip()
+            if skip_str:
+                cfg['skip_events'] = [int(x.strip()) for x in skip_str.split(',') if x.strip()]
+            else:
+                cfg['skip_events'] = []
+
+            output_dir = out_var.get().strip() or None
+            config_win.destroy()
+
+            self.root.config(cursor="wait")
+            self.root.update()
+            try:
+                arrays = run_batch_k_analysis(
+                    time_history, events, cfg,
+                    output_dir=output_dir
+                )
+
+                run_data = self.data_manager.get_data(f"runs/[{run_idx}]")
+                run_data['k_analysis'] = {
+                    'config': {
+                        'k_pre_start': cfg['k_pre_start'],
+                        'k_pre_end': cfg['k_pre_end'],
+                        'k_smooth_w': cfg['k_smooth_w'],
+                        'k_highpass_freq': cfg['k_highpass_freq'],
+                        'skip_events': cfg['skip_events'],
+                    },
+                    'per_event_config': {},
+                    'results': {k: v for k, v in arrays.items()},
+                }
+
+                self.refresh_tree()
+                messagebox.showinfo(
+                    "Done",
+                    f"K analysis complete for {len(events)} events.\n"
+                    f"Use 'Save As' to persist results to HDF5."
+                )
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                messagebox.showerror("Error", f"K analysis failed: {e}")
+            finally:
+                self.root.config(cursor="")
+
+        ttk.Button(config_win, text="Run", command=on_run).grid(
+            row=row, column=0, columnspan=2, pady=10
+        )
 
     def pick_indices(self):
         item = self.data_tree.selection()[0]

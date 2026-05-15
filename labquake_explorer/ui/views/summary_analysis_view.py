@@ -413,19 +413,37 @@ class SummaryAnalysisView(tk.Toplevel):
         # --- (7) Stiffness k ---
         if 'stiffness' in self.axs_map:
             ax = self.axs_map['stiffness']
-            t_r, vals = _get_analysis_in_range('k')
-            if t_r is not None and len(t_r) > 0:
-                valid = ~np.isnan(vals)
-                if np.any(valid):
-                    ax.plot(t_r[valid], vals[valid], 'o-', color='teal',
-                            markersize=3)
-                else:
-                    ax.text(0.5, 0.5, 'No valid k values',
-                            ha='center', va='center', transform=ax.transAxes, color='gray')
-            else:
-                ax.text(0.5, 0.5, 'Run "Run Drop Analysis" first',
+            # Read k values from k_analysis (independent from drop analysis)
+            k_results = None
+            try:
+                k_analysis = self.data_manager.get_data(
+                    f"runs/[{self.run_idx}]/k_analysis"
+                )
+                if isinstance(k_analysis, dict):
+                    k_results = k_analysis.get('results', None)
+            except Exception:
+                pass
+
+            has_data = False
+            if k_results and isinstance(k_results, dict):
+                k_trigger = k_results.get('trigger_times', k_results.get('trigger_time', None))
+                k_vals = k_results.get('k', None)
+                if k_trigger is not None and k_vals is not None:
+                    k_trigger = np.asarray(k_trigger)
+                    k_vals = np.asarray(k_vals)
+                    # Filter to event range
+                    range_mask = (k_trigger >= t_start) & (k_trigger <= t_end)
+                    t_r = k_trigger[range_mask] - t_offset
+                    vals = k_vals[range_mask]
+                    valid = ~np.isnan(vals)
+                    if np.any(valid):
+                        ax.plot(t_r[valid], vals[valid], 'o-', color='teal', markersize=3)
+                        has_data = True
+
+            if not has_data:
+                ax.text(0.5, 0.5, 'Run "Run K Analysis" first',
                         ha='center', va='center', transform=ax.transAxes, color='gray')
-            ax.set_ylabel(r'k [MPa/μm]')
+            ax.set_ylabel(r'k [MPa/\u03bcm]')
             self._add_trigger_lines(ax, t_start, t_end, t_offset, add_text=(active[0]=='stiffness'))
 
         # --- (8) Eddy - LVDT ---

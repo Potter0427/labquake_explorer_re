@@ -5,6 +5,14 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 import numpy as np
 
+from labquake_explorer.analysis.event_drop_analyzer import moving_average
+
+# Defined groups
+GROUPS = {
+    '[Group] Eddy Current Sensors': 'eddy',
+    '[Group] Pressure & Friction': 'pressure',
+    '[Group] PZT Sensors': 'pzt'
+}
 
 class TimeHistoryView(tk.Toplevel):
     def __init__(self, parent, run_idx, path):
@@ -42,6 +50,9 @@ class TimeHistoryView(tk.Toplevel):
         self.time_length = len(self.time_history['time'])
         self.plottable_fields = self._find_plottable_fields(self.time_history)
 
+        # Twin axis reference
+        self.pressure_twin_ax = None
+
         # Configure layout
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
@@ -77,22 +88,7 @@ class TimeHistoryView(tk.Toplevel):
         y_scroll.grid(row=0, column=1, sticky="ns")
         y_frame.grid_columnconfigure(0, weight=1)
 
-        # Group preset buttons
-        preset_frame = ttk.Frame(ctrl_frame)
-        preset_frame.grid(row=1, column=6, columnspan=2, padx=5, pady=5, sticky="w")
-
-        # Define groups: (button_label, keyword_match_function)
-        self._preset_groups = {
-            'LVDT': lambda f: 'lp_displacement' in f.lower() or 'lvdt' in f.lower(),
-            'Eddy': lambda f: 'eddy' in f.lower(),
-            'Pressure': lambda f: any(k in f.lower() for k in ['pressure', 'mu', 'tau']),
-            'PZT': lambda f: 'pzt' in f.lower(),
-        }
-        for label, match_fn in self._preset_groups.items():
-            ttk.Button(preset_frame, text=label, width=8,
-                       command=lambda fn=match_fn: self._select_group(fn)).pack(side=tk.LEFT, padx=2)
-
-        ttk.Button(ctrl_frame, text="Plot", command=self.update_plot).grid(row=2, column=0, columnspan=2, padx=15, pady=5)
+        ttk.Button(ctrl_frame, text="Plot", command=self.update_plot).grid(row=1, column=6, padx=15, pady=5)
 
         # Populate X combobox
         x_options = ['time'] + [f for f in self.plottable_fields if f != 'time']
@@ -100,12 +96,17 @@ class TimeHistoryView(tk.Toplevel):
         self.x_combo.set('time')
 
         # Populate Y listbox
+        for group_name in GROUPS.keys():
+            self.y_listbox.insert(tk.END, group_name)
+            
         for f in self.plottable_fields:
             if f != 'time':
                 self.y_listbox.insert(tk.END, f)
 
-        # Select smart defaults
-        self._select_defaults()
+        # Select smart defaults (the 3 groups)
+        self.y_listbox.selection_set(0)
+        self.y_listbox.selection_set(1)
+        self.y_listbox.selection_set(2)
 
         # Init combobox values for events
         n_events = len(self.events)
@@ -155,30 +156,6 @@ class TimeHistoryView(tk.Toplevel):
                 return None
         return current
 
-    def _select_defaults(self):
-        """Select sensible default Y fields."""
-        defaults = ['LP_displacement', 'mu', 'shear_pressure', 'normal_pressure']
-        all_items = [self.y_listbox.get(i) for i in range(self.y_listbox.size())]
-        for i, item in enumerate(all_items):
-            base = item.split('/')[-1]
-            if base in defaults:
-                self.y_listbox.selection_set(i)
-
-        # If nothing matched, select the first few eddy channels
-        if not self.y_listbox.curselection():
-            eddy_indices = [i for i, item in enumerate(all_items) if 'eddy' in item.lower()]
-            for idx in eddy_indices[:3]:
-                self.y_listbox.selection_set(idx)
-
-    def _select_group(self, match_fn):
-        """Clear selection and select all fields matching the given filter, then plot."""
-        self.y_listbox.selection_clear(0, tk.END)
-        all_items = [self.y_listbox.get(i) for i in range(self.y_listbox.size())]
-        for i, item in enumerate(all_items):
-            if match_fn(item):
-                self.y_listbox.selection_set(i)
-        self.update_plot()
-
     def _add_trigger_lines(self, ax, t_start, t_end):
         """Draw vertical trigger lines within the visible time range."""
         visible = self.trigger_times[(self.trigger_times >= t_start) & (self.trigger_times <= t_end)]
@@ -186,15 +163,13 @@ class TimeHistoryView(tk.Toplevel):
             ax.axvline(x=tr, color='gray', linestyle=':', alpha=0.4, linewidth=0.8)
 
     def update_plot(self, event=None):
-        # Get selected Y fields
         selected_indices = self.y_listbox.curselection()
         if not selected_indices:
             return
 
-        y_fields = [self.y_listbox.get(i) for i in selected_indices]
+        y_items = [self.y_listbox.get(i) for i in selected_indices]
         x_field = self.x_combo.get()
 
-        # Get event range
         try:
             start_idx = int(self.start_combo.get())
             end_idx = int(self.end_combo.get())
@@ -218,17 +193,20 @@ class TimeHistoryView(tk.Toplevel):
             t_end += 1.0
 
         mask = (t_all >= t_start) & (t_all <= t_end)
-
+        
         # Get X data
-        x_data_full = self._get_data_by_path(x_field)
-        if x_data_full is None:
-            return
-        x_data = np.asarray(x_data_full)[mask]
+        if x_field == 'time':
+            x_data = t_all[mask]
+        else:
+            x_data_full = self._get_data_by_path(x_field)
+            if x_data_full is None:
+                return
+            x_data = np.asarray(x_data_full)[mask]
 
         if len(x_data) == 0:
             return
 
-        n_plots = len(y_fields)
+        n_plots = len(y_items)
 
         # Clean up old widgets
         if self.canvas_widget:
@@ -238,6 +216,9 @@ class TimeHistoryView(tk.Toplevel):
         if self.figure:
             plt.close(self.figure)
 
+        if self.pressure_twin_ax is not None:
+            self.pressure_twin_ax = None
+
         # Create figure
         share_x = (x_field == 'time')
         self.figure = Figure(figsize=(10, max(3, 2.5 * n_plots)), dpi=100)
@@ -245,29 +226,79 @@ class TimeHistoryView(tk.Toplevel):
         if n_plots == 1:
             axes = [self.figure.add_subplot(1, 1, 1)]
         else:
-            axes = self.figure.subplots(n_plots, 1, sharex=share_x, squeeze=False)
-            axes = [axes[i, 0] for i in range(n_plots)]
+            axes_array = self.figure.subplots(n_plots, 1, sharex=share_x, squeeze=False)
+            axes = [axes_array[i, 0] for i in range(n_plots)]
 
-        for i, y_field in enumerate(y_fields):
+        for i, y_item in enumerate(y_items):
             ax = axes[i]
-            y_data_full = self._get_data_by_path(y_field)
-            if y_data_full is None:
-                ax.text(0.5, 0.5, f'{y_field} not found',
-                        ha='center', va='center', transform=ax.transAxes, color='gray')
-                continue
+            
+            if y_item in GROUPS:
+                group_key = GROUPS[y_item]
+                if group_key == 'eddy':
+                    eddy_keys = sorted([k for k in self.time_history.keys() if 'eddy' in k])
+                    for k in eddy_keys:
+                        y_val = moving_average(self.time_history[k][mask], 50)
+                        # Pad edges if moving_average shortened the array
+                        if len(y_val) < len(x_data):
+                            y_val = np.pad(y_val, (0, len(x_data) - len(y_val)), 'edge')
+                        ax.plot(x_data, y_val, label=k)
+                    if eddy_keys:
+                        ax.legend(loc='upper right', fontsize='small')
+                        ax.set_ylabel('μm')
+                        ax.set_title('Eddy Current Sensors (μm) [Smoothed w=50]')
+                elif group_key == 'pressure':
+                    w_p = 50
+                    if 'mu' in self.time_history:
+                        y_val = moving_average(self.time_history['mu'][mask], w_p)
+                        if len(y_val) < len(x_data): y_val = np.pad(y_val, (0, len(x_data) - len(y_val)), 'edge')
+                        ax.plot(x_data, y_val, 'r-', label='Mu')
+                    ax.set_ylabel('Friction (Mu)', color='r')
+                    ax.set_title(f'Pressure & Friction [Smoothed w={w_p}]')
 
-            y_data = np.asarray(y_data_full)[mask]
-            ax.plot(x_data, y_data, linewidth=0.8)
-            ax.set_ylabel(y_field.split('/')[-1])
+                    if 'normal_pressure' in self.time_history:
+                        self.pressure_twin_ax = ax.twinx()
+                        y_val_norm = moving_average(self.time_history['normal_pressure'][mask], w_p)
+                        if len(y_val_norm) < len(x_data): y_val_norm = np.pad(y_val_norm, (0, len(x_data) - len(y_val_norm)), 'edge')
+                        self.pressure_twin_ax.plot(x_data, y_val_norm, 'b--', alpha=0.5, label='Normal')
+                        if 'shear_pressure' in self.time_history:
+                            y_val_shear = moving_average(self.time_history['shear_pressure'][mask], w_p)
+                            if len(y_val_shear) < len(x_data): y_val_shear = np.pad(y_val_shear, (0, len(x_data) - len(y_val_shear)), 'edge')
+                            self.pressure_twin_ax.plot(x_data, y_val_shear, 'g--', alpha=0.5, label='Shear')
+                        self.pressure_twin_ax.set_ylabel('MPa')
+                        self.pressure_twin_ax.legend(loc='upper right', fontsize='small')
+                        self.pressure_twin_ax.grid(False)
+                elif group_key == 'pzt':
+                    pzt_keys = sorted([k for k in self.time_history.keys() if 'pzt' in k])
+                    for k in pzt_keys:
+                        y_val = moving_average(self.time_history[k][mask], 50)
+                        if len(y_val) < len(x_data): y_val = np.pad(y_val, (0, len(x_data) - len(y_val)), 'edge')
+                        ax.plot(x_data, y_val, label=k, alpha=0.7)
+                    if pzt_keys:
+                        ax.legend(loc='upper right', fontsize='small')
+                        ax.set_ylabel('PZT')
+                        ax.set_title('PZT Sensors [Smoothed w=50]')
+            else:
+                y_data_full = self._get_data_by_path(y_item)
+                if y_data_full is None:
+                    ax.text(0.5, 0.5, f'{y_item} not found',
+                            ha='center', va='center', transform=ax.transAxes, color='gray')
+                else:
+                    w_i = 50
+                    y_data = np.asarray(y_data_full)[mask]
+                    y_val = moving_average(y_data, w_i)
+                    if len(y_val) < len(x_data): y_val = np.pad(y_val, (0, len(x_data) - len(y_val)), 'edge')
+                    ax.plot(x_data, y_val, linewidth=0.8)
+                    ax.set_ylabel(y_item.split('/')[-1])
+                    ax.set_title(f"{y_item.split('/')[-1]} [Smoothed w={w_i}]")
+
             ax.grid(True, linestyle='-', alpha=0.3)
 
             if x_field == 'time':
                 self._add_trigger_lines(ax, t_start, t_end)
 
-        # X label on the last axis
-        axes[-1].set_xlabel(x_field)
+        axes[-1].set_xlabel(x_field if x_field != 'time' else 'Time (s)')
 
-        self.figure.subplots_adjust(hspace=0.3)
+        self.figure.tight_layout()
 
         self.canvas = FigureCanvasTkAgg(self.figure, master=self)
         self.canvas_widget = self.canvas.get_tk_widget()

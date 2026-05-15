@@ -10,6 +10,7 @@ from labquake_explorer.ui.views.time_history_view import TimeHistoryView
 from labquake_explorer.ui.views.colored_lines_view import ColoredLinesView
 from labquake_explorer.ui.views.summary_analysis_view import SummaryAnalysisView
 from labquake_explorer.ui.views.event_drop_editor_view import EventDropEditorView
+from labquake_explorer.ui.views.event_k_editor_view import EventKEditorView
 from labquake_explorer.ui.views.misc import *
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     'ColoredLinesView',
     'SummaryAnalysisView',
     'EventDropEditorView',
+    'EventKEditorView',
 ]
