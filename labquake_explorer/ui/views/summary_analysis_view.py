@@ -20,6 +20,7 @@ SUMMARY_SUBPLOT_DEFS = [
     ('delta_slip', r'$\Delta$ Slip'),
     ('delta_lvdt', r'$\Delta$ LVDT'),
     ('d_values', 'D'),
+    ('stiffness', 'k'),
     ('eddy_lvdt', 'Eddy-LVDT'),
     ('slip_rate', 'Slip Rate'),
     ('heatmap', 'Heatmap'),
@@ -409,7 +410,25 @@ class SummaryAnalysisView(tk.Toplevel):
             ax.set_ylabel(r'D [μm]')
             self._add_trigger_lines(ax, t_start, t_end, t_offset, add_text=(active[0]=='d_values'))
 
-        # --- (7) Eddy - LVDT ---
+        # --- (7) Stiffness k ---
+        if 'stiffness' in self.axs_map:
+            ax = self.axs_map['stiffness']
+            t_r, vals = _get_analysis_in_range('k')
+            if t_r is not None and len(t_r) > 0:
+                valid = ~np.isnan(vals)
+                if np.any(valid):
+                    ax.plot(t_r[valid], vals[valid], 'o-', color='teal',
+                            markersize=3)
+                else:
+                    ax.text(0.5, 0.5, 'No valid k values',
+                            ha='center', va='center', transform=ax.transAxes, color='gray')
+            else:
+                ax.text(0.5, 0.5, 'Run "Run Drop Analysis" first',
+                        ha='center', va='center', transform=ax.transAxes, color='gray')
+            ax.set_ylabel(r'k [MPa/μm]')
+            self._add_trigger_lines(ax, t_start, t_end, t_offset, add_text=(active[0]=='stiffness'))
+
+        # --- (8) Eddy - LVDT ---
         if 'eddy_lvdt' in self.axs_map:
             ax = self.axs_map['eddy_lvdt']
             if 'LP_displacement' in self.time_history:
