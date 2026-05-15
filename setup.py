@@ -8,6 +8,9 @@ setup(
         "numpy",
         "h5py",
         "matplotlib",
+        "scipy",
+        "pandas",
+        "tqdm",
     ],
     entry_points={
         'console_scripts': [
