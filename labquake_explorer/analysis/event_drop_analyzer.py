@@ -273,46 +273,49 @@ def analyze_single_event(
     row['D_max'] = np.nan
     row['D_E3'] = np.nan
 
-    push_speed = config.get('push_speed', 3.508)
-    delay_sec = config.get('delay_sec', 0.05)
+    is_1d = time_history.get('is_1d', False)
 
-    # Need previous non-skipped and valid event
-    if event_idx > 0:
-        prev_idx = event_idx - 1
-        t_trig_prev = None
-        while prev_idx >= 0:
-            if prev_idx in skip_list:
+    if not is_1d:
+        push_speed = config.get('push_speed', 3.508)
+        delay_sec = config.get('delay_sec', 0.05)
+
+        # Need previous non-skipped and valid event
+        if event_idx > 0:
+            prev_idx = event_idx - 1
+            t_trig_prev = None
+            while prev_idx >= 0:
+                if prev_idx in skip_list:
+                    prev_idx -= 1
+                    continue
+                
+                pe = events[prev_idx]
+                t_trig_prev = _get_t_trig(pe)
+                if t_trig_prev is not None:
+                    break
                 prev_idx -= 1
-                continue
-            
-            pe = events[prev_idx]
-            t_trig_prev = _get_t_trig(pe)
+
             if t_trig_prev is not None:
-                break
-            prev_idx -= 1
+                # D_Push
+                dt = t_trig - t_trig_prev
+                row['D_Push'] = dt * push_speed
 
-        if t_trig_prev is not None:
-            # D_Push
-            dt = t_trig - t_trig_prev
-            row['D_Push'] = dt * push_speed
+                # D_max (LVDT) and D_E3 (Eddy)
+                lvdt_all = time_history['LP_displacement']
+                lvdt_all_sm = moving_average(lvdt_all, config.get('lvdt_smooth_w', 100))
 
-            # D_max (LVDT) and D_E3 (Eddy)
-            lvdt_all = time_history['LP_displacement']
-            lvdt_all_sm = moving_average(lvdt_all, config.get('lvdt_smooth_w', 100))
+                idx_curr = np.argmin(np.abs(t_all - (t_trig + delay_sec)))
+                idx_prev = np.argmin(np.abs(t_all - (t_trig_prev + delay_sec)))
+                row['D_max'] = abs(lvdt_all_sm[idx_curr] - lvdt_all_sm[idx_prev])
 
-            idx_curr = np.argmin(np.abs(t_all - (t_trig + delay_sec)))
-            idx_prev = np.argmin(np.abs(t_all - (t_trig_prev + delay_sec)))
-            row['D_max'] = abs(lvdt_all_sm[idx_curr] - lvdt_all_sm[idx_prev])
+                # D_E3: use 3rd eddy channel if available
+                if len(eddy_keys) >= 3:
+                    target_key = eddy_keys[2]
+                else:
+                    target_key = eddy_keys[0] if eddy_keys else None
 
-            # D_E3: use 3rd eddy channel if available
-            if len(eddy_keys) >= 3:
-                target_key = eddy_keys[2]
-            else:
-                target_key = eddy_keys[0] if eddy_keys else None
-
-            if target_key:
-                eddy_data = time_history[target_key]
-                row['D_E3'] = abs(eddy_data[idx_curr] - eddy_data[idx_prev])
+                if target_key:
+                    eddy_data = time_history[target_key]
+                    row['D_E3'] = abs(eddy_data[idx_curr] - eddy_data[idx_prev])
 
     return row
 

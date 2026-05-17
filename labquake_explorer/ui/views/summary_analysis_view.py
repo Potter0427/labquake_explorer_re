@@ -102,7 +102,13 @@ class SummaryAnalysisView(tk.Toplevel):
         ttk.Label(ctrl, text="Show:").grid(row=0, column=4, padx=(15, 5), pady=5)
         self.subplot_vars = {}
         col = 5
+        
+        is_1d = self.time_history.get('is_1d', False)
+
         for key, label in SUMMARY_SUBPLOT_DEFS:
+            if is_1d and key == 'd_values':
+                continue
+                
             var = tk.BooleanVar(value=True)
             cb = ttk.Checkbutton(ctrl, text=label, variable=var, command=self.rebuild_figure)
             cb.grid(row=0, column=col, padx=3, pady=5)
@@ -111,7 +117,7 @@ class SummaryAnalysisView(tk.Toplevel):
 
         # Smoothing controls
         ttk.Label(ctrl, text="Mu smooth:").grid(row=1, column=0, padx=5, pady=2)
-        self.mu_smooth_var = tk.IntVar(value=500)
+        self.mu_smooth_var = tk.IntVar(value=100)
         ttk.Entry(ctrl, textvariable=self.mu_smooth_var, width=6).grid(row=1, column=1, padx=5, pady=2)
 
         ttk.Label(ctrl, text="LVDT smooth:").grid(row=1, column=2, padx=5, pady=2)
