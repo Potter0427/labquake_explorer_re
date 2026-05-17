@@ -150,11 +150,10 @@ class LabQuakeAnalyzer:
 
         self.params = {
             'pzt_chs': range(1, 5),
-            # 'acc_chs': range(5, 8),
-            'sigma_ch': 5, 'tau_ch': 6,
-            'lvdt_ch': 7, 'eddy_chs': range(8, 13),
-            'sigma_cal': get_cal_params(cylinder_area=rsm500, num_cylinders=9),
-            'tau_cal': get_cal_params(cylinder_area=rsm1000, num_cylinders=3),
+            'sigma_ch': 8, 'tau_ch': 9,
+            'lvdt_ch': 10, 'eddy_chs': range(11, 16),
+            'sigma_cal': get_cal_params(cylinder_area=rsm500, num_cylinders=3),
+            'tau_cal': get_cal_params(cylinder_area=rsm1000, num_cylinders=1),
             'eddy_cal': -95.0,
             'lvdt_cal': -5040.0,
             'rsm1000_area': rsm1000
@@ -224,23 +223,20 @@ class LabQuakeAnalyzer:
             if block == 1:
                 data_dict['time'] = t_b
                 
-                # PZT & Acc
+                # PZT
                 for ch in self.params['pzt_chs']:
                     _, val = self.get_physical_data(ch, block)
                     data_dict[f'pzt_ch{ch}'] = val
-                # for ch in self.params['acc_chs']:
-                #     _, val = self.get_physical_data(ch, block)
-                #     data_dict[f'acc_ch{ch}'] = val
 
                 # Stress
                 _, sigma = self.get_physical_data(self.params['sigma_ch'], block)
                 _, tau = self.get_physical_data(self.params['tau_ch'], block)
                 data_dict['sigma'] = sigma[0]
-                data_dict['normal_bar'] = sigma[1]   # 管內剪力液壓 (bar)
-                data_dict['normal_psi'] = sigma[2] 
+                data_dict['normal_bar'] = sigma[1]
+                data_dict['normal_psi'] = sigma[2]
                 data_dict['tau'] = tau[0]
-                data_dict['shear_bar'] = tau[1]   # 管內剪力液壓 (bar)
-                data_dict['shear_psi'] = tau[2]   # 管內剪力液壓 (psi)
+                data_dict['shear_bar'] = tau[1]
+                data_dict['shear_psi'] = tau[2]
                 with np.errstate(divide='ignore', invalid='ignore'):
                     data_dict['mu'] = tau[0] / sigma[0]
 
@@ -302,8 +298,9 @@ class LabQuakeAnalyzer:
         threshold: threshold_sampling 的位移閾值
         dt_max: threshold_sampling 的最大時間間隔
         lowpass_fc: 低通濾波截止頻率 (Hz)
+        通道配置：sigma_ch=8, tau_ch=9, lvdt_ch=10, eddy_chs=11~15
+        油壓缸：RSM500×3 (正向力), RSM1000×1 (剪力)
         """
-        # 決定輸出的檔名 (例如 t0145.h5)
         output_h5 = f"{experiment_name}.h5"
         print(f"開始匯出資料至 {output_h5} (Run: {run_name}) ...")
         print(f"  Slip Rate 參數: threshold={threshold}, dt_max={dt_max}, lowpass_fc={lowpass_fc}")
@@ -312,7 +309,7 @@ class LabQuakeAnalyzer:
         t_cont, sigma = self.get_physical_data(self.params['sigma_ch'], block=1)
         _, tau = self.get_physical_data(self.params['tau_ch'], block=1)
         _, lvdt = self.get_physical_data(self.params['lvdt_ch'], block=1, baseline_block=baseline_block)
-        _, eddy = self.get_physical_data(self.params['eddy_chs'][0], block=1, baseline_block=baseline_block)
+        _, eddy = self.get_physical_data(list(self.params['eddy_chs'])[0], block=1, baseline_block=baseline_block)
 
         # 2. 取得所有事件的觸發時間
         triggers = self.get_trigger_times(self.params['sigma_ch'])
@@ -323,7 +320,6 @@ class LabQuakeAnalyzer:
             all_blocks = proc.get_available_blocks(self.params['sigma_ch'])
 
         # 3. 解析 run_name 轉換成陣列編號 (例如 run1 -> 0, run2 -> 1)
-        # 這裡假設命名規則都是 "run" 加上數字
         run_number_str = ''.join(filter(str.isdigit, run_name))
         run_index = str(int(run_number_str) - 1) if run_number_str else "0"
 
@@ -332,7 +328,6 @@ class LabQuakeAnalyzer:
             
             # --- 設定根目錄屬性 ---
             if 'name' not in f.keys():
-                # 根據傳入的 diameter 設定名稱 (例如 200PC)
                 f.create_dataset('name', data=f"{experiment_name}_{diameter}PC")
             
             # --- 建立或獲取 runs 資料夾 ---
@@ -347,8 +342,6 @@ class LabQuakeAnalyzer:
                 del runs_group[run_index]
             
             current_run = runs_group.create_group(run_index)
-            
-            # 寫入顯示在 UI 上的名稱 (例如 run4_8MPa)
             current_run.create_dataset('name', data=f"{run_name}_{normal_stress}")
             
             # --- 建立 time history 資料夾 ---
@@ -361,7 +354,6 @@ class LabQuakeAnalyzer:
                 _, eddy_data = self.get_physical_data(ch, block=1, baseline_block=baseline_block)
                 th_group.create_dataset(f'eddy_ch{ch}', data=eddy_data)
                 
-                # Block 1 背景速率: lowpass → threshold_sampling → gradient → filter
                 s_lp, _ = SignalUtils.lowpass(eddy_data, t_cont, fc=lowpass_fc)
                 u_dec, t_dec = SignalUtils.threshold_sampling(s_lp, t_cont, threshold=threshold, dt_max=dt_max)
                 if len(u_dec) > 1:
@@ -370,7 +362,7 @@ class LabQuakeAnalyzer:
                     th_group.create_dataset(f'sliprate_ch{ch}', data=rate[mask_v])
                     th_group.create_dataset(f't_sliprate_ch{ch}', data=np.array(t_dec)[mask_v])
                 
-            # 高取樣 Block 的事件速率 (存入子目錄以防 UI 樹狀圖太亂)
+            # 高取樣 Block 的事件速率
             hr_group = th_group.create_group("high_rate_sliprates")
             for block in all_blocks:
                 if block == 1:
@@ -388,7 +380,11 @@ class LabQuakeAnalyzer:
                 
             # pressure
             th_group.create_dataset('normal_pressure', data=sigma[0])
+            th_group.create_dataset('normal_bar', data=sigma[1])
+            th_group.create_dataset('normal_psi', data=sigma[2])
             th_group.create_dataset('shear_pressure', data=tau[0])
+            th_group.create_dataset('shear_bar', data=tau[1])
+            th_group.create_dataset('shear_psi', data=tau[2])
             with np.errstate(divide='ignore', invalid='ignore'):
                 mu = np.where(sigma[0] != 0, tau[0] / sigma[0], 0)
             th_group.create_dataset('mu', data=mu)
@@ -464,4 +460,3 @@ class LabQuakePlotter:
             offset = 0.1 if ha == 'left' else -0.1
             ax.text(x_pos + offset, (y_start + y_end) / 2, label_text, 
                     ha=ha, va='center', color=color, fontweight='bold', fontsize=10)
-

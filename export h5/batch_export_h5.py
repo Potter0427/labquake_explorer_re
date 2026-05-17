@@ -1,9 +1,11 @@
 import os
 import glob
 import sys
-from labquake_2Danalysis import LabQuakeAnalyzer
+from labquake_1Danalysis import LabQuakeAnalyzer
 
-def batch_export():
+def batch_export(fault_area_cm2, sliding_area_cm2, 
+                 window_sec=1.0, baseline_block=2, 
+                 threshold=3, dt_max=0.2, lowpass_fc=500):
     # 尋找當前目錄下所有的 .tpc5 檔案
     tpc5_files = glob.glob("*.tpc5")
     
@@ -11,11 +13,9 @@ def batch_export():
         print("當前目錄下找不到任何 .tpc5 檔案", flush=True)
         return
 
-    # 參數設定
-    Diameter = 250
-    Radius = Diameter / 2
-    FAULT_AREA = 50 * 50 / 10000  # m^2
-    SLIDING_AREA = Radius**2 * 3.14159 / 1000000  # m^2
+    # 參數設定 (將 cm^2 轉為 m^2)
+    FAULT_AREA = fault_area_cm2 / 10000.0
+    SLIDING_AREA = sliding_area_cm2 / 10000.0
 
     print(f"找到 {len(tpc5_files)} 個 .tpc5 檔案，準備開始批次轉換...", flush=True)
     print("-" * 50, flush=True)
@@ -40,12 +40,12 @@ def batch_export():
                 experiment_name=experiment_name, 
                 normal_stress=normal_stress, 
                 run_name=run_name, 
-                window_sec=1.0, 
-                baseline_block=2, 
+                window_sec=window_sec, 
+                baseline_block=baseline_block, 
                 sliding_area=SLIDING_AREA, 
-                threshold=3, 
-                dt_max=0.2, 
-                lowpass_fc=500
+                threshold=threshold, 
+                dt_max=dt_max, 
+                lowpass_fc=lowpass_fc
             )
             print(f"  [成功] {filename} 匯出完成", flush=True)
             
