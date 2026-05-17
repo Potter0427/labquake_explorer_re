@@ -9,6 +9,7 @@ from typing import Optional, List, Dict, Any
 
 from labquake_explorer.data.data_manager import DataManager
 from labquake_explorer.utils.config import LabquakeExplorerConfig
+from labquake_explorer.utils.user_prefs import UserPrefs
 from labquake_explorer.ui.views import (
     SimplePlotView, PointsSelectorView, IndexPickerView,
     SlopeAnalyzerView, DynamicStrainArrivalPickerView, CZMFitterView,
@@ -453,6 +454,27 @@ class LabquakeExplorer:
         config_win.grab_set()
 
         cfg = dict(DEFAULT_CONFIG)
+        
+        # Load globally saved drop config
+        saved_drop_cfg = UserPrefs.get('DropAnalysis', 'config', {})
+        if saved_drop_cfg:
+            try:
+                for k in ['tau_smooth_w', 'lvdt_smooth_w']:
+                    if k in saved_drop_cfg: cfg[k] = int(saved_drop_cfg[k])
+                for k in ['push_speed', 'delay_sec', 'window_sec']:
+                    if k in saved_drop_cfg: cfg[k] = float(saved_drop_cfg[k])
+                if 'pre_win' in saved_drop_cfg:
+                    cfg['pre_win'] = tuple(float(x) for x in saved_drop_cfg['pre_win'])
+                if 'post_win' in saved_drop_cfg:
+                    cfg['post_win'] = tuple(float(x) for x in saved_drop_cfg['post_win'])
+            except Exception:
+                pass
+                
+        # Load shared skip_events
+        global_skip = UserPrefs.get('GlobalAnalysis', 'skip_events', None)
+        if global_skip is not None:
+            cfg['skip_events'] = global_skip
+
         # Try to load existing config from this run to persist settings
         try:
             existing_analysis = self.data_manager.get_data(f"runs/[{run_idx}]/analysis")
@@ -540,6 +562,15 @@ class LabquakeExplorer:
                 cfg['skip_events'] = []
 
             output_dir = out_var.get().strip() or None
+
+            # Save to global UserPrefs (shared skip_events)
+            UserPrefs.set('DropAnalysis', 'config', {
+                'pre_win': list(cfg['pre_win']),
+                'post_win': list(cfg['post_win']),
+                'tau_smooth_w': cfg['tau_smooth_w'],
+                'lvdt_smooth_w': cfg['lvdt_smooth_w']
+            })
+            UserPrefs.set('GlobalAnalysis', 'skip_events', cfg['skip_events'])
 
             config_win.destroy()
 
@@ -650,6 +681,23 @@ class LabquakeExplorer:
         config_win.grab_set()
 
         cfg = dict(DEFAULT_K_CONFIG)
+        
+        # Load globally saved k config
+        saved_k_cfg = UserPrefs.get('KAnalysis', 'config', {})
+        if saved_k_cfg:
+            try:
+                for k in ['k_pre_start', 'k_pre_end', 'k_highpass_freq']:
+                    if k in saved_k_cfg: cfg[k] = float(saved_k_cfg[k])
+                if 'k_smooth_w' in saved_k_cfg:
+                    cfg['k_smooth_w'] = int(saved_k_cfg['k_smooth_w'])
+            except Exception:
+                pass
+
+        # Load shared skip_events
+        global_skip = UserPrefs.get('GlobalAnalysis', 'skip_events', None)
+        if global_skip is not None:
+            cfg['skip_events'] = global_skip
+
         # Load existing k_analysis config
         try:
             existing = self.data_manager.get_data(f"runs/[{run_idx}]/k_analysis")
@@ -724,6 +772,16 @@ class LabquakeExplorer:
                 cfg['skip_events'] = []
 
             output_dir = out_var.get().strip() or None
+            
+            # Save to global UserPrefs (shared skip_events)
+            UserPrefs.set('KAnalysis', 'config', {
+                'k_pre_start': cfg['k_pre_start'],
+                'k_pre_end': cfg['k_pre_end'],
+                'k_smooth_w': cfg['k_smooth_w'],
+                'k_highpass_freq': cfg['k_highpass_freq']
+            })
+            UserPrefs.set('GlobalAnalysis', 'skip_events', cfg['skip_events'])
+            
             config_win.destroy()
 
             self.root.config(cursor="wait")

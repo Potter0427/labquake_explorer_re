@@ -178,6 +178,68 @@ class EventKEditorView(tk.Toplevel):
         self.toolbar = NavigationToolbar2Tk(self.canvas, self.toolbar_frame)
         self.toolbar.update()
 
+        self._vlines_start = []
+        self._vlines_end = []
+        self._drag_target = None
+        self._setup_drag_events()
+
+    def _setup_drag_events(self):
+        self.canvas.mpl_connect('button_press_event', self._on_press)
+        self.canvas.mpl_connect('motion_notify_event', self._on_motion)
+        self.canvas.mpl_connect('button_release_event', self._on_release)
+
+    def _on_press(self, event):
+        if event.inaxes not in (self.ax1, self.ax2) or event.button != 1:
+            return
+        
+        # Check distance to start/end lines
+        x = event.xdata
+        if not self._vlines_start or not self._vlines_end:
+            return
+            
+        start_x = self._vlines_start[0].get_xdata()[0]
+        end_x = self._vlines_end[0].get_xdata()[0]
+        
+        dist_start = abs(x - start_x)
+        dist_end = abs(x - end_x)
+        
+        threshold = 0.05 * (self.ax1.get_xlim()[1] - self.ax1.get_xlim()[0])
+        
+        if dist_start < threshold and dist_start < dist_end:
+            self._drag_target = 'start'
+        elif dist_end < threshold:
+            self._drag_target = 'end'
+
+    def _on_motion(self, event):
+        if self._drag_target is None or event.inaxes not in (self.ax1, self.ax2):
+            return
+            
+        x = event.xdata
+        if self._drag_target == 'start':
+            for line in self._vlines_start:
+                line.set_xdata([x, x])
+        else:
+            for line in self._vlines_end:
+                line.set_xdata([x, x])
+                
+        self.canvas.draw_idle()
+
+    def _on_release(self, event):
+        if self._drag_target is None:
+            return
+            
+        x = event.xdata if event.xdata is not None else (
+            self._vlines_start[0].get_xdata()[0] if self._drag_target == 'start' else self._vlines_end[0].get_xdata()[0]
+        )
+        
+        if self._drag_target == 'start':
+            self.pre_start_var.set(f"{x:.3f}")
+        else:
+            self.pre_end_var.set(f"{x:.3f}")
+            
+        self._drag_target = None
+        self._recompute()
+
     def _recompute(self):
         cfg = self._get_current_config()
         result = analyze_single_k(
@@ -232,8 +294,8 @@ class EventKEditorView(tk.Toplevel):
         # --- Subplot 1: LVDT vs time ---
         self.ax1.plot(t_rel[disp_mask], lvdt_raw_z[disp_mask], color='C0', alpha=0.5, lw=0.8, label='Raw')
         self.ax1.plot(t_rel[disp_mask], lvdt_proc_z[disp_mask], color='red', alpha=0.6, lw=1.5, label='Processed')
-        self.ax1.axvline(x=k_pre_start, color='blue', ls='--', alpha=0.5, lw=1)
-        self.ax1.axvline(x=k_pre_end, color='blue', ls='--', alpha=0.5, lw=1)
+        l1s = self.ax1.axvline(x=k_pre_start, color='blue', ls='--', alpha=0.5, lw=1)
+        l1e = self.ax1.axvline(x=k_pre_end, color='blue', ls='--', alpha=0.5, lw=1)
         self.ax1.axvspan(k_pre_start, k_pre_end, alpha=0.08, color='blue')
         self.ax1.set_ylabel('LVDT slip [\u03bcm]')
         self.ax1.set_title(f'Event {self.event_idx} - K Stiffness')
@@ -243,13 +305,16 @@ class EventKEditorView(tk.Toplevel):
         # --- Subplot 2: Tau vs time ---
         self.ax2.plot(t_rel[disp_mask], tau_raw_z[disp_mask], color='C0', alpha=0.5, lw=0.8, label='Raw')
         self.ax2.plot(t_rel[disp_mask], tau_proc_z[disp_mask], color='red', alpha=0.6, lw=1.5, label='Processed')
-        self.ax2.axvline(x=k_pre_start, color='blue', ls='--', alpha=0.5, lw=1)
-        self.ax2.axvline(x=k_pre_end, color='blue', ls='--', alpha=0.5, lw=1)
+        l2s = self.ax2.axvline(x=k_pre_start, color='blue', ls='--', alpha=0.5, lw=1)
+        l2e = self.ax2.axvline(x=k_pre_end, color='blue', ls='--', alpha=0.5, lw=1)
         self.ax2.axvspan(k_pre_start, k_pre_end, alpha=0.08, color='blue')
         self.ax2.set_ylabel(r'rel. $\tau$ [MPa]')
         self.ax2.set_xlabel('time relative [s]')
         self.ax2.legend(loc='upper left', fontsize='small')
         self.ax2.grid(True)
+        
+        self._vlines_start = [l1s, l2s]
+        self._vlines_end = [l1e, l2e]
 
         # --- Subplot 3: Tau vs LVDT ---
         pre_mask = (t_rel >= k_pre_start) & (t_rel <= k_pre_end)

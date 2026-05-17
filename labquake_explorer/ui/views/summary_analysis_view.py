@@ -9,8 +9,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import numpy as np
-
 from labquake_explorer.analysis.event_drop_analyzer import moving_average
+from labquake_explorer.utils.user_prefs import UserPrefs
 
 # Available subplot definitions: (key, label)
 SUMMARY_SUBPLOT_DEFS = [
@@ -117,7 +117,7 @@ class SummaryAnalysisView(tk.Toplevel):
 
         # Smoothing controls
         ttk.Label(ctrl, text="Mu smooth:").grid(row=1, column=0, padx=5, pady=2)
-        self.mu_smooth_var = tk.IntVar(value=100)
+        self.mu_smooth_var = tk.IntVar(value=500)
         ttk.Entry(ctrl, textvariable=self.mu_smooth_var, width=6).grid(row=1, column=1, padx=5, pady=2)
 
         ttk.Label(ctrl, text="LVDT smooth:").grid(row=1, column=2, padx=5, pady=2)
@@ -134,10 +134,8 @@ class SummaryAnalysisView(tk.Toplevel):
 
         ttk.Button(ctrl, text="Refresh", command=self.update_plot).grid(row=1, column=8, padx=15, pady=2)
 
-        # Load saved summary config if available
-        saved_config = {}
-        if isinstance(self.analysis, dict) and 'config' in self.analysis:
-            saved_config = self.analysis['config'].get('summary_config', {})
+        # 讀取全域配置 (不再侷限於單一 HDF5)
+        saved_config = UserPrefs.get('SummaryAnalysisView', 'config', {})
 
         # Event dropdowns
         n_events = len(self.events)
@@ -145,9 +143,14 @@ class SummaryAnalysisView(tk.Toplevel):
         self.start_combo.config(values=options)
         self.end_combo.config(values=options)
         
-        # Load start/end selection
-        start_idx = saved_config.get('start_idx', 0)
-        end_idx = saved_config.get('end_idx', n_events - 1)
+        # 讀取該實驗專屬的記憶 (HDF5 內部)，只用於記錄事件區間
+        local_config = {}
+        if isinstance(self.analysis, dict) and 'config' in self.analysis:
+            local_config = self.analysis['config'].get('summary_config', {})
+            
+        # Load start/end selection (從檔案專屬設定讀取)
+        start_idx = local_config.get('start_idx', 0)
+        end_idx = local_config.get('end_idx', n_events - 1)
         # Validate indices
         start_idx = max(0, min(start_idx, n_events - 1))
         end_idx = max(0, min(end_idx, n_events - 1))
@@ -173,7 +176,7 @@ class SummaryAnalysisView(tk.Toplevel):
         self.rebuild_figure()
 
     def _get_active_subplots(self):
-        return [key for key, _ in SUMMARY_SUBPLOT_DEFS if self.subplot_vars[key].get()]
+        return [key for key, _ in SUMMARY_SUBPLOT_DEFS if key in self.subplot_vars and self.subplot_vars[key].get()]
 
     def _get_event_time(self, idx):
         """Robustly get event time from events list."""
@@ -216,8 +219,8 @@ class SummaryAnalysisView(tk.Toplevel):
         for i, key in enumerate(active):
             self.axs_map[key] = axes_list[i, 0]
 
-        self.figure.subplots_adjust(hspace=0.25)
-        
+        # 設定固定的子圖邊界，取代會導致變扁的 tight_layout
+        self.figure.subplots_adjust(left=0.08, right=0.94, top=0.95, bottom=0.06, hspace=0.25)
         # Ensure all subplots have exactly the same width by allocating a colorbar axis for each
         from mpl_toolkits.axes_grid1 import make_axes_locatable
         self.caxs_map = {}
@@ -613,10 +616,9 @@ class SummaryAnalysisView(tk.Toplevel):
         self.canvas.draw()
 
     def _save_summary_config(self):
-        """Save current UI state to the analysis config in memory."""
-        summary_config = {
-            'start_idx': self.start_combo.current(),
-            'end_idx': self.end_combo.current(),
+        """Save current UI state to the analysis config in memory and globally."""
+        # Global config: UI settings only (no event indices)
+        global_config = {
             'subplots': self._get_active_subplots(),
             'mu_smooth': self.mu_smooth_var.get(),
             'lvdt_smooth': self.lvdt_smooth_var.get(),
@@ -624,14 +626,22 @@ class SummaryAnalysisView(tk.Toplevel):
             'vmax': self.vmax_var.get(),
         }
         
-        # Update analysis config in DataManager
+        # Local config: Includes event indices
+        local_config = dict(global_config)
+        local_config['start_idx'] = self.start_combo.current()
+        local_config['end_idx'] = self.end_combo.current()
+        
+        # Save globally using UserPrefs
+        UserPrefs.set('SummaryAnalysisView', 'config', global_config)
+        
+        # Update analysis config in DataManager (for file persistence, local)
         run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
         if 'analysis' not in run_data:
             run_data['analysis'] = {}
         if 'config' not in run_data['analysis']:
             run_data['analysis']['config'] = {}
         
-        run_data['analysis']['config']['summary_config'] = summary_config
+        run_data['analysis']['config']['summary_config'] = local_config
 
     def on_close(self):
         try:

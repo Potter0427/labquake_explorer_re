@@ -6,6 +6,7 @@ from matplotlib.figure import Figure
 import numpy as np
 
 from labquake_explorer.analysis.event_drop_analyzer import moving_average
+from labquake_explorer.utils.user_prefs import UserPrefs
 
 # Defined groups
 GROUPS = {
@@ -93,28 +94,54 @@ class TimeHistoryView(tk.Toplevel):
         # Populate X combobox
         x_options = ['time'] + [f for f in self.plottable_fields if f != 'time']
         self.x_combo.config(values=x_options)
-        self.x_combo.set('time')
 
         # Populate Y listbox
+        y_items_all = []
         for group_name in GROUPS.keys():
             self.y_listbox.insert(tk.END, group_name)
+            y_items_all.append(group_name)
             
         for f in self.plottable_fields:
             if f != 'time':
                 self.y_listbox.insert(tk.END, f)
-
-        # Select smart defaults (the 3 groups)
-        self.y_listbox.selection_set(0)
-        self.y_listbox.selection_set(1)
-        self.y_listbox.selection_set(2)
+                y_items_all.append(f)
 
         # Init combobox values for events
         n_events = len(self.events)
         options = [str(i) for i in range(n_events)]
         self.start_combo.config(values=options)
         self.end_combo.config(values=options)
-        self.start_combo.current(0)
-        self.end_combo.current(n_events - 1)
+
+        # Load global user preferences
+        saved_config = UserPrefs.get('TimeHistoryView', 'config', {})
+
+        # Load X selection
+        saved_x = saved_config.get('x_field', 'time')
+        if saved_x in x_options:
+            self.x_combo.set(saved_x)
+        else:
+            self.x_combo.set('time')
+
+        # Load Y selection
+        saved_y = saved_config.get('y_fields', None)
+        if saved_y is not None:
+            for y_val in saved_y:
+                if y_val in y_items_all:
+                    idx = y_items_all.index(y_val)
+                    self.y_listbox.selection_set(idx)
+        else:
+            # Select smart defaults (the 3 groups)
+            if len(y_items_all) >= 3:
+                self.y_listbox.selection_set(0)
+                self.y_listbox.selection_set(1)
+                self.y_listbox.selection_set(2)
+
+        # Start/end default to the full range
+        start_idx = 0
+        end_idx = n_events - 1
+        
+        self.start_combo.current(start_idx)
+        self.end_combo.current(end_idx)
 
         self.start_combo.bind("<<ComboboxSelected>>", self.update_plot)
         self.end_combo.bind("<<ComboboxSelected>>", self.update_plot)
@@ -311,7 +338,20 @@ class TimeHistoryView(tk.Toplevel):
 
         self.canvas.draw()
 
+    def _save_config(self):
+        try:
+            selected_indices = self.y_listbox.curselection()
+            y_fields = [self.y_listbox.get(i) for i in selected_indices]
+            config = {
+                'x_field': self.x_combo.get(),
+                'y_fields': y_fields
+            }
+            UserPrefs.set('TimeHistoryView', 'config', config)
+        except Exception as e:
+            print(f"Warning: failed to save TimeHistoryView config: {e}")
+
     def on_close(self):
+        self._save_config()
         if self.figure:
             plt.close(self.figure)
         self.destroy()
