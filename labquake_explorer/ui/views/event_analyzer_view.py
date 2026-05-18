@@ -13,7 +13,7 @@ class EventAnalyzerView(tk.Toplevel):
     def __init__(self, parent, run_idx, event_idx, item_y="shear_stress", item_x="displacement"):
         self.parent = parent
         super().__init__(self.parent.root)
-        self.title(f"Event Analyzer - Event {event_idx}")
+        self.title(f"Event Analyzer - Event {event_idx + 1}")
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # Initialize data attributes
@@ -177,17 +177,17 @@ class EventAnalyzerView(tk.Toplevel):
     def init_event_combobox(self):
         """Initialize the event selection combobox"""
         n_events = len(self.data_manager.get_data(f"runs/[{self.run_idx}]/events"))
-        options = [f"{i}" for i in range(n_events)]
+        options = [f"{i + 1}" for i in range(n_events)]
         self.event_combobox.config(values=options)
         self.event_combobox.current(self.event_idx)
 
     def on_event_changed(self, event=None):
         """Handle event selection from combobox"""
-        new_event_idx = int(self.event_combobox.get())
+        new_event_idx = int(self.event_combobox.get()) - 1
         if new_event_idx != self.event_idx:
             self.event_idx = new_event_idx
             # Update title
-            self.title(f"Event Analyzer - Event {self.event_idx}")
+            self.title(f"Event Analyzer - Event {self.event_idx + 1}")
             # Load the new event
             self.event = self.data_manager.get_data(f"runs/[{self.run_idx}]/events/[{self.event_idx}]")
             # Reset the comboboxes with new event data
@@ -363,7 +363,7 @@ class EventAnalyzerView(tk.Toplevel):
         self.ax.grid(True, linestyle='--', alpha=0.3)
         
         # Set title with run and event info
-        self.ax.set_title(f"{self.data_manager.get_data('name')} run{self.run_idx:02d} event{self.event_idx}: {self.item_y} vs {self.item_x if self.item_x else 'Index'}")
+        self.ax.set_title(f"{self.data_manager.get_data('name')} run{self.run_idx:02d} event{self.event_idx + 1}: {self.item_y} vs {self.item_x if self.item_x else 'Index'}")
         
         # Apply better styling to the plot
         self.ax.spines['top'].set_visible(False)

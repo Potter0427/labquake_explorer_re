@@ -111,7 +111,7 @@ class ColoredLinesView(tk.Toplevel):
 
         # Populate event dropdowns
         n_events = len(self.events)
-        options = [str(i) for i in range(n_events)]
+        options = [str(i + 1) for i in range(n_events)]
         self.start_combo.config(values=options)
         self.end_combo.config(values=options)
         self.start_combo.current(0)

@@ -2,6 +2,27 @@
 Event K Stiffness Editor – allows the user to adjust the locking window,
 smoothing, and low-pass filter parameters for a single event, then
 recompute and save the updated k value.
+
+Performance notes
+-----------------
+Drawing is split into two layers:
+
+  _draw_static(config)
+      Clears ax1 and ax2, redraws fixed time-series lines (raw + processed
+      LVDT and tau).  tight_layout() runs here.  Called once per event load
+      and whenever a parameter that changes the signal shape is updated.
+
+  _draw_dynamic(result, config)
+      Only updates mutable Artists: vline positions (set_xdata), axvspan,
+      and ax3 (scatter + fit line) which is always cleared and redrawn
+      because it depends on the locking window bounds.  Uses draw_idle().
+
+Signal computation cache
+------------------------
+_process_signal (moving average + Butterworth high-pass filter) is
+expensive.  Results are cached in self._signal_cache keyed by a tuple of
+(event_idx, w, hp_freq, half_win).  Cache is invalidated automatically on
+key mismatch and holds at most one entry (single-event editor context).
 """
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -53,6 +74,16 @@ class EventKEditorView(tk.Toplevel):
         self.canvas = None
         self.toolbar = None
 
+        # Signal computation cache: holds result of last _process_signal call.
+        # Key: (event_idx, w, hp_freq, half_win)
+        self._signal_cache: dict = {}
+
+        # Dynamic Artist handles
+        self._vlines_start: list = []
+        self._vlines_end: list = []
+        self._axvspan = None
+        self._drag_target = None
+
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
 
@@ -64,7 +95,7 @@ class EventKEditorView(tk.Toplevel):
         ttk.Label(ctrl, text="Event:").grid(row=0, column=0, padx=5)
         self.event_combo = ttk.Combobox(ctrl, state="readonly", width=8)
         self.event_combo.grid(row=0, column=1, padx=5)
-        self.event_combo['values'] = [str(i) for i in range(len(self.events))]
+        self.event_combo['values'] = [str(i + 1) for i in range(len(self.events))]
         self.event_combo.current(self.event_idx)
         self.event_combo.bind("<<ComboboxSelected>>", self._on_event_change)
 
@@ -95,20 +126,29 @@ class EventKEditorView(tk.Toplevel):
             row=0, column=11, padx=5
         )
 
-        # Build figure
+        # Build figure once – Canvas is never destroyed after this point
         self._build_figure()
+        self._draw_static(self._get_current_config())
         self._recompute()
 
+    # ------------------------------------------------------------------
+    # Event switching
+    # ------------------------------------------------------------------
+
     def _on_event_change(self, event=None):
-        self.event_idx = int(self.event_combo.get())
+        self.event_idx = int(self.event_combo.get()) - 1
         self._load_config()
-        # Update UI from config
+        self._signal_cache.clear()   # invalidate cache on event switch
         self.pre_start_var.set(str(self.config['k_pre_start']))
         self.pre_end_var.set(str(self.config['k_pre_end']))
         self.smooth_w_var.set(str(self.config['k_smooth_w']))
         self.hp_freq_var.set(str(self.config['k_highpass_freq']))
-        self._build_figure()
+        self._draw_static(self._get_current_config())
         self._recompute()
+
+    # ------------------------------------------------------------------
+    # Config
+    # ------------------------------------------------------------------
 
     def _load_config(self):
         """Load K analysis config, merging saved per-event overrides."""
@@ -123,9 +163,12 @@ class EventKEditorView(tk.Toplevel):
                     for k in ['k_pre_start', 'k_pre_end', 'k_smooth_w',
                               'k_highpass_freq', 'k_window_sec']:
                         if k in cfg:
-                            self.config[k] = float(cfg[k]) if 'freq' in k or 'start' in k or 'end' in k or 'sec' in k else int(cfg[k])
+                            self.config[k] = (
+                                float(cfg[k])
+                                if 'freq' in k or 'start' in k or 'end' in k or 'sec' in k
+                                else int(cfg[k])
+                            )
 
-                # Check per-event overrides
                 per_event = k_analysis.get('per_event_config', {})
                 if isinstance(per_event, dict):
                     ev_key = str(self.event_idx)
@@ -152,23 +195,22 @@ class EventKEditorView(tk.Toplevel):
             pass
         return cfg
 
-    def _build_figure(self):
-        if hasattr(self, 'canvas') and self.canvas:
-            self.canvas.get_tk_widget().destroy()
-        if hasattr(self, 'toolbar_frame') and self.toolbar_frame:
-            self.toolbar_frame.destroy()
+    # ------------------------------------------------------------------
+    # Figure / Canvas – created once, never destroyed
+    # ------------------------------------------------------------------
 
+    def _build_figure(self):
         self.figure = Figure(figsize=(10, 10), dpi=100)
         gs = self.figure.add_gridspec(3, 1, height_ratios=[1, 1, 1.2], hspace=0.3)
         self.ax1 = self.figure.add_subplot(gs[0])
         self.ax2 = self.figure.add_subplot(gs[1], sharex=self.ax1)
         self.ax3 = self.figure.add_subplot(gs[2])
 
-        self.ax1.set_ylabel('LVDT slip [\u03bcm]')
-        self.ax2.set_ylabel(r'rel. $\tau$ [MPa]')
+        self.ax1.set_ylabel('LVDT slip [μm]')
+        self.ax2.set_ylabel(r'$\tau$ [MPa]')
         self.ax2.set_xlabel('time relative [s]')
-        self.ax3.set_ylabel(r'rel. $\tau$ [MPa]')
-        self.ax3.set_xlabel('LVDT slip [\u03bcm]')
+        self.ax3.set_ylabel(r'$\tau$ [MPa]')
+        self.ax3.set_xlabel('LVDT slip [μm]')
 
         self.canvas = FigureCanvasTkAgg(self.figure, master=self)
         self.canvas.get_tk_widget().grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
@@ -178,10 +220,221 @@ class EventKEditorView(tk.Toplevel):
         self.toolbar = NavigationToolbar2Tk(self.canvas, self.toolbar_frame)
         self.toolbar.update()
 
+        self._setup_drag_events()
+
+    # ------------------------------------------------------------------
+    # Signal cache helper
+    # ------------------------------------------------------------------
+
+    def _get_processed_signals(self, config):
+        """Return processed tau and LVDT arrays, using cache when possible.
+
+        Cache key: (event_idx, w, hp_freq, half_win).
+        On a cache hit the expensive _process_signal / filter step is skipped.
+        """
+        ev = self.events[self.event_idx]
+        t_trig = _get_t_trig(ev)
+        if t_trig is None:
+            return None
+
+        k_pre_start = config.get('k_pre_start', -3.0)
+        w = config.get('k_smooth_w', 100)
+        hp_freq = config.get('k_highpass_freq', 0.0)
+        half_win = max(config.get('k_window_sec', 3.5), abs(k_pre_start) + 0.5)
+
+        cache_key = (self.event_idx, w, hp_freq, half_win)
+
+        if cache_key in self._signal_cache:
+            return self._signal_cache[cache_key]
+
+        t_all = self.time_history['time']
+        mask = (t_all >= t_trig - half_win) & (t_all <= t_trig + half_win)
+        t_rel = t_all[mask] - t_trig
+
+        if len(t_rel) < 20:
+            return None
+
+        dt = np.median(np.diff(t_all[mask]))
+        fs = 1.0 / dt if dt > 0 else 0
+
+        tau_key = 'tau_local' if 'tau_local' in self.time_history else 'shear_pressure'
+        tau_raw = self.time_history[tau_key][mask]
+        tau_proc = _process_signal(tau_raw, w, hp_freq, fs)
+
+        lvdt_raw = self.time_history['LP_displacement'][mask]
+        lvdt_proc = _process_signal(lvdt_raw, w, hp_freq, fs)
+
+        payload = {
+            't_trig': t_trig,
+            't_rel': t_rel,
+            'mask': mask,
+            'fs': fs,
+            'tau_raw': tau_raw,
+            'tau_proc': tau_proc,
+            'lvdt_raw': lvdt_raw,
+            'lvdt_proc': lvdt_proc,
+        }
+        # Keep only the latest cache entry to bound memory usage
+        self._signal_cache = {cache_key: payload}
+        return payload
+
+    # ------------------------------------------------------------------
+    # Static layer – slow path, called once per event / signal-param change
+    # ------------------------------------------------------------------
+
+    def _draw_static(self, config):
+        """Clear ax1 and ax2, draw fixed time-series lines.
+
+        Leaves ax3 empty (it will be populated by _draw_dynamic).
+        Installs vline handles into self._vlines_start / _end so that
+        _draw_dynamic can reposition them cheaply.
+        """
+        signals = self._get_processed_signals(config)
+        if signals is None:
+            return
+
+        k_pre_start = config.get('k_pre_start', -3.0)
+        k_pre_end = config.get('k_pre_end', -0.5)
+
+        t_rel = signals['t_rel']
+        tau_raw = signals['tau_raw']
+        tau_proc = signals['tau_proc']
+        lvdt_raw = signals['lvdt_raw']
+        lvdt_proc = signals['lvdt_proc']
+
+        tau_raw_z = tau_raw - tau_raw[0]
+        tau_proc_z = tau_proc - tau_proc[0]
+        lvdt_raw_z = lvdt_raw - lvdt_raw[0]
+        lvdt_proc_z = lvdt_proc - lvdt_proc[0]
+
+        # Cache zero-referenced processed signals for dynamic layer
+        self._tau_proc_z = tau_proc_z
+        self._lvdt_proc_z = lvdt_proc_z
+        self._t_rel_static = t_rel
+
+        t_disp_start = k_pre_start
+        t_disp_end = abs(k_pre_start) - 1.0
+        disp_mask = (t_rel >= t_disp_start) & (t_rel <= t_disp_end)
+
+        for ax in [self.ax1, self.ax2, self.ax3]:
+            ax.clear()
+
+        # Reset dynamic Artist references
         self._vlines_start = []
         self._vlines_end = []
-        self._drag_target = None
-        self._setup_drag_events()
+        self._axvspan = None
+
+        # ---- ax1: LVDT vs time ----
+        self.ax1.plot(t_rel[disp_mask], lvdt_raw_z[disp_mask],
+                      color='C0', alpha=0.5, lw=0.8, label='Raw')
+        self.ax1.plot(t_rel[disp_mask], lvdt_proc_z[disp_mask],
+                      color='red', alpha=0.6, lw=1.5, label='Processed')
+        l1s = self.ax1.axvline(x=k_pre_start, color='blue', ls='--', alpha=0.5, lw=1)
+        l1e = self.ax1.axvline(x=k_pre_end, color='blue', ls='--', alpha=0.5, lw=1)
+        self.ax1.axvspan(k_pre_start, k_pre_end, alpha=0.08, color='blue')
+        self.ax1.set_ylabel('LVDT slip [μm]')
+        self.ax1.set_title(f'Event {self.event_idx} - K Stiffness')
+        self.ax1.legend(loc='upper left', fontsize='small')
+        self.ax1.grid(True)
+
+        # ---- ax2: Tau vs time ----
+        self.ax2.plot(t_rel[disp_mask], tau_raw_z[disp_mask],
+                      color='C0', alpha=0.5, lw=0.8, label='Raw')
+        self.ax2.plot(t_rel[disp_mask], tau_proc_z[disp_mask],
+                      color='red', alpha=0.6, lw=1.5, label='Processed')
+        l2s = self.ax2.axvline(x=k_pre_start, color='blue', ls='--', alpha=0.5, lw=1)
+        l2e = self.ax2.axvline(x=k_pre_end, color='blue', ls='--', alpha=0.5, lw=1)
+        self.ax2.axvspan(k_pre_start, k_pre_end, alpha=0.08, color='blue')
+        self.ax2.set_ylabel(r'$\tau$ [MPa]')
+        self.ax2.set_xlabel('time relative [s]')
+        self.ax2.legend(loc='upper left', fontsize='small')
+        self.ax2.grid(True)
+
+        self._vlines_start = [l1s, l2s]
+        self._vlines_end = [l1e, l2e]
+
+        # ax3 stays clear; _draw_dynamic will populate it
+        self.ax3.set_xlabel('LVDT slip [μm]')
+        self.ax3.set_ylabel(r'$\tau$ [MPa]')
+        self.ax3.set_title('Pre-Rupture Stiffness')
+        self.ax3.grid(True)
+
+        self.figure.tight_layout()
+        self.canvas.draw()
+
+    # ------------------------------------------------------------------
+    # Dynamic layer – fast path, called after every recompute
+    # ------------------------------------------------------------------
+
+    def _draw_dynamic(self, result, config):
+        """Update vline positions and redraw ax3 without clearing ax1/ax2.
+
+        ax3 (scatter + fit) is always cleared because its content is fully
+        determined by k_pre_start / k_pre_end; it is cheap since it only
+        contains scatter points, not long time-series.
+        """
+        k_pre_start = config.get('k_pre_start', -3.0)
+        k_pre_end = config.get('k_pre_end', -0.5)
+
+        # ---- Update vline positions ----
+        for line in self._vlines_start:
+            line.set_xdata([k_pre_start, k_pre_start])
+        for line in self._vlines_end:
+            line.set_xdata([k_pre_end, k_pre_end])
+
+        # ---- Update axvspan (remove old, add new) ----
+        if self._axvspan is not None:
+            try:
+                self._axvspan.remove()
+            except Exception:
+                pass
+        # axvspan affects both ax1 and ax2; add to ax1 only (ax2 shares same limits)
+        # For simplicity we re-add to both axes independently
+        for ax in [self.ax1, self.ax2]:
+            for coll in ax.collections:
+                try:
+                    coll.remove()
+                except Exception:
+                    pass
+            ax.axvspan(k_pre_start, k_pre_end, alpha=0.08, color='blue')
+        self._axvspan = True   # sentinel; actual objects managed per-axis
+
+        # ---- Redraw ax3 (cheap: scatter data only) ----
+        self.ax3.clear()
+
+        t_rel = getattr(self, '_t_rel_static', None)
+        tau_proc_z = getattr(self, '_tau_proc_z', None)
+        lvdt_proc_z = getattr(self, '_lvdt_proc_z', None)
+
+        if t_rel is not None and tau_proc_z is not None and lvdt_proc_z is not None:
+            pre_mask = (t_rel >= k_pre_start) & (t_rel <= k_pre_end)
+            if np.sum(pre_mask) > 5:
+                tau_pre = tau_proc_z[pre_mask]
+                lvdt_pre = lvdt_proc_z[pre_mask]
+
+                self.ax3.plot(lvdt_pre, tau_pre, 'o', color='teal',
+                              markersize=3, alpha=0.5, label='Data')
+
+                k_val = result.get('k', np.nan)
+                if not np.isnan(k_val):
+                    k_coeffs = result.get('k_coeffs', None)
+                    if k_coeffs is not None:
+                        fit_y = k_coeffs[0] * lvdt_pre + k_coeffs[1]
+                        self.ax3.plot(lvdt_pre, fit_y, 'r-', lw=2,
+                                      label=fr'Fit: $k$ = {k_val:.4f} MPa/$\mu$m')
+
+                self.ax3.legend(loc='best', fontsize='small')
+
+        self.ax3.set_xlabel('LVDT slip [μm]')
+        self.ax3.set_ylabel(r'$\tau$ [MPa]')
+        self.ax3.set_title('Pre-Rupture Stiffness')
+        self.ax3.grid(True)
+
+        self.canvas.draw_idle()
+
+    # ------------------------------------------------------------------
+    # Drag interaction
+    # ------------------------------------------------------------------
 
     def _setup_drag_events(self):
         self.canvas.mpl_connect('button_press_event', self._on_press)
@@ -191,20 +444,19 @@ class EventKEditorView(tk.Toplevel):
     def _on_press(self, event):
         if event.inaxes not in (self.ax1, self.ax2) or event.button != 1:
             return
-        
-        # Check distance to start/end lines
+
         x = event.xdata
         if not self._vlines_start or not self._vlines_end:
             return
-            
+
         start_x = self._vlines_start[0].get_xdata()[0]
         end_x = self._vlines_end[0].get_xdata()[0]
-        
+
         dist_start = abs(x - start_x)
         dist_end = abs(x - end_x)
-        
+
         threshold = 0.05 * (self.ax1.get_xlim()[1] - self.ax1.get_xlim()[0])
-        
+
         if dist_start < threshold and dist_start < dist_end:
             self._drag_target = 'start'
         elif dist_end < threshold:
@@ -213,7 +465,7 @@ class EventKEditorView(tk.Toplevel):
     def _on_motion(self, event):
         if self._drag_target is None or event.inaxes not in (self.ax1, self.ax2):
             return
-            
+
         x = event.xdata
         if self._drag_target == 'start':
             for line in self._vlines_start:
@@ -221,126 +473,60 @@ class EventKEditorView(tk.Toplevel):
         else:
             for line in self._vlines_end:
                 line.set_xdata([x, x])
-                
+
         self.canvas.draw_idle()
 
     def _on_release(self, event):
         if self._drag_target is None:
             return
-            
+
         x = event.xdata if event.xdata is not None else (
-            self._vlines_start[0].get_xdata()[0] if self._drag_target == 'start' else self._vlines_end[0].get_xdata()[0]
+            self._vlines_start[0].get_xdata()[0]
+            if self._drag_target == 'start'
+            else self._vlines_end[0].get_xdata()[0]
         )
-        
+
         if self._drag_target == 'start':
             self.pre_start_var.set(f"{x:.3f}")
         else:
             self.pre_end_var.set(f"{x:.3f}")
-            
+
         self._drag_target = None
         self._recompute()
 
+    # ------------------------------------------------------------------
+    # Recompute
+    # ------------------------------------------------------------------
+
     def _recompute(self):
         cfg = self._get_current_config()
+
+        # Check whether signal-shaping parameters changed; if so, invalidate
+        # the static layer and redraw it (this triggers _draw_static which also
+        # repopulates the cache with the new w / hp_freq / half_win).
+        k_pre_start = cfg.get('k_pre_start', -3.0)
+        w = cfg.get('k_smooth_w', 100)
+        hp_freq = cfg.get('k_highpass_freq', 0.0)
+        half_win = max(cfg.get('k_window_sec', 3.5), abs(k_pre_start) + 0.5)
+        new_key = (self.event_idx, w, hp_freq, half_win)
+
+        static_needs_redraw = new_key not in self._signal_cache
+
+        if static_needs_redraw:
+            # Invalidate stale cache entries before _draw_static refills it
+            self._signal_cache.clear()
+            self._draw_static(cfg)
+
         result = analyze_single_k(
             self.time_history, self.events, self.event_idx, cfg
         )
         self._result = result
         self._current_cfg = cfg
-        self._draw(result, cfg)
+        self._draw_dynamic(result, cfg)
 
-    def _draw(self, result, config):
-        ev = self.events[self.event_idx]
-        t_trig = _get_t_trig(ev)
-        if t_trig is None:
-            return
-
-        k_pre_start = config.get('k_pre_start', -3.0)
-        k_pre_end = config.get('k_pre_end', -0.5)
-        w = config.get('k_smooth_w', 100)
-        hp_freq = config.get('k_highpass_freq', 0.0)
-        half_win = max(config.get('k_window_sec', 3.5), abs(k_pre_start) + 0.5)
-
-        t_all = self.time_history['time']
-        mask = (t_all >= t_trig - half_win) & (t_all <= t_trig + half_win)
-        t_rel = t_all[mask] - t_trig
-
-        if len(t_rel) < 20:
-            return
-
-        dt = np.median(np.diff(t_all[mask]))
-        fs = 1.0 / dt if dt > 0 else 0
-
-        # Raw and processed
-        tau_key = 'tau_local' if 'tau_local' in self.time_history else 'shear_pressure'
-        tau_raw = self.time_history[tau_key][mask]
-        tau_proc = _process_signal(tau_raw, w, hp_freq, fs)
-        tau_raw_z = tau_raw - tau_raw[0]
-        tau_proc_z = tau_proc - tau_proc[0]
-
-        lvdt_raw = self.time_history['LP_displacement'][mask]
-        lvdt_proc = _process_signal(lvdt_raw, w, hp_freq, fs)
-        lvdt_raw_z = lvdt_raw - lvdt_raw[0]
-        lvdt_proc_z = lvdt_proc - lvdt_proc[0]
-
-        # Display range
-        t_disp_start = k_pre_start
-        t_disp_end = abs(k_pre_start) - 1.0
-        disp_mask = (t_rel >= t_disp_start) & (t_rel <= t_disp_end)
-
-        for ax in [self.ax1, self.ax2, self.ax3]:
-            ax.clear()
-
-        # --- Subplot 1: LVDT vs time ---
-        self.ax1.plot(t_rel[disp_mask], lvdt_raw_z[disp_mask], color='C0', alpha=0.5, lw=0.8, label='Raw')
-        self.ax1.plot(t_rel[disp_mask], lvdt_proc_z[disp_mask], color='red', alpha=0.6, lw=1.5, label='Processed')
-        l1s = self.ax1.axvline(x=k_pre_start, color='blue', ls='--', alpha=0.5, lw=1)
-        l1e = self.ax1.axvline(x=k_pre_end, color='blue', ls='--', alpha=0.5, lw=1)
-        self.ax1.axvspan(k_pre_start, k_pre_end, alpha=0.08, color='blue')
-        self.ax1.set_ylabel('LVDT slip [\u03bcm]')
-        self.ax1.set_title(f'Event {self.event_idx} - K Stiffness')
-        self.ax1.legend(loc='upper left', fontsize='small')
-        self.ax1.grid(True)
-
-        # --- Subplot 2: Tau vs time ---
-        self.ax2.plot(t_rel[disp_mask], tau_raw_z[disp_mask], color='C0', alpha=0.5, lw=0.8, label='Raw')
-        self.ax2.plot(t_rel[disp_mask], tau_proc_z[disp_mask], color='red', alpha=0.6, lw=1.5, label='Processed')
-        l2s = self.ax2.axvline(x=k_pre_start, color='blue', ls='--', alpha=0.5, lw=1)
-        l2e = self.ax2.axvline(x=k_pre_end, color='blue', ls='--', alpha=0.5, lw=1)
-        self.ax2.axvspan(k_pre_start, k_pre_end, alpha=0.08, color='blue')
-        self.ax2.set_ylabel(r'rel. $\tau$ [MPa]')
-        self.ax2.set_xlabel('time relative [s]')
-        self.ax2.legend(loc='upper left', fontsize='small')
-        self.ax2.grid(True)
-        
-        self._vlines_start = [l1s, l2s]
-        self._vlines_end = [l1e, l2e]
-
-        # --- Subplot 3: Tau vs LVDT ---
-        pre_mask = (t_rel >= k_pre_start) & (t_rel <= k_pre_end)
-        if np.sum(pre_mask) > 5:
-            tau_pre = tau_proc_z[pre_mask]
-            lvdt_pre = lvdt_proc_z[pre_mask]
-
-            self.ax3.plot(lvdt_pre, tau_pre, 'o', color='teal', markersize=3, alpha=0.5, label='Data')
-
-            k_val = result.get('k', np.nan)
-            if not np.isnan(k_val):
-                k_coeffs = result.get('k_coeffs', None)
-                if k_coeffs is not None:
-                    fit_y = k_coeffs[0] * lvdt_pre + k_coeffs[1]
-                    self.ax3.plot(lvdt_pre, fit_y, 'r-', lw=2,
-                                 label=fr'Fit: $k$ = {k_val:.4f} MPa/$\mu$m')
-
-            self.ax3.legend(loc='best', fontsize='small')
-
-        self.ax3.set_xlabel('LVDT slip [\u03bcm]')
-        self.ax3.set_ylabel(r'rel. $\tau$ [MPa]')
-        self.ax3.set_title('Pre-Rupture Stiffness')
-        self.ax3.grid(True)
-
-        self.figure.tight_layout()
-        self.canvas.draw()
+    # ------------------------------------------------------------------
+    # Save
+    # ------------------------------------------------------------------
 
     def _apply_and_save(self):
         if not hasattr(self, '_result'):
@@ -371,7 +557,6 @@ class EventKEditorView(tk.Toplevel):
         if 'results' not in k_analysis or not isinstance(k_analysis['results'], dict):
             k_analysis['results'] = {}
 
-        # Save per-event config override
         k_analysis['per_event_config'][str(self.event_idx)] = {
             'k_pre_start': cfg['k_pre_start'],
             'k_pre_end': cfg['k_pre_end'],
@@ -379,7 +564,6 @@ class EventKEditorView(tk.Toplevel):
             'k_highpass_freq': cfg['k_highpass_freq'],
         }
 
-        # Save result
         r = self._result
         results = k_analysis['results']
         n_events = len(self.events)
@@ -392,15 +576,12 @@ class EventKEditorView(tk.Toplevel):
         _ensure_array('trigger_times')[self.event_idx] = r.get('trigger_time', np.nan)
         _ensure_array('k')[self.event_idx] = r.get('k', np.nan)
 
-        # Store in memory
         run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
         run_data['k_analysis'] = k_analysis
 
-        # Save to HDF5
         try:
             self.data_manager.fast_save_analysis(self.run_idx, k_analysis, group_name='k_analysis')
         except TypeError:
-            # Fallback if fast_save_analysis doesn't support group_name
             self.data_manager.fast_save_analysis(self.run_idx, k_analysis)
 
         msg = f"Event {self.event_idx} k value updated and saved."

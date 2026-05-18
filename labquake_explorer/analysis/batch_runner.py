@@ -67,11 +67,14 @@ def generate_diagnostic_plot(
             i_p = np.argmin(np.abs(t_arr - offset))
             val = abs(y_arr[i_n] - y_arr[i_p])
             x_pos = -offset if color == 'orange' else offset
-            ha = 'left' if color == 'orange' else 'right'
-            # Force symbols to be correct in LaTeX
-            label = r'$\Delta %s_{%s}$=%s' % (symbol, lbl, f"{val:.3f}")
+            # Both orange and green texts should be on the right side of the arrow (ha='left')
+            ha = 'left'
+            # Force symbols to be correct in LaTeX with bold math font
             if symbol == '\\delta':
-                label = r'$\delta_{%s}$=%s $\mu m$' % (lbl, f"{val:.1f}")
+                label = fr"$\boldsymbol{{\delta}}_{{\boldsymbol{{{lbl}}}}}$=$\boldsymbol{{{val:.1f}}}$ $\boldsymbol{{\mu m}}$"
+            else:
+                sym_clean = symbol.replace('\\', '')
+                label = fr"$\boldsymbol{{\Delta}}\boldsymbol{{{sym_clean}}}_{{\boldsymbol{{{lbl}}}}}$=$\boldsymbol{{{val:.3f}}}$"
                 
             _plot_arrow(ax, x_pos, y_arr[i_n], y_arr[i_p], color, label, ha=ha)
             ax.hlines(y=y_arr[i_p], xmin=-offset, xmax=offset, colors=color, linestyles='--', alpha=0.6, lw=1.2)
@@ -91,15 +94,16 @@ def generate_diagnostic_plot(
     if tau_res.get('valid'):
         _draw_trend_lines(ax1, tau_pts, tau_res, 'darkslateblue')
         val = abs(tau_res['delta'])
+        label = fr"$\boldsymbol{{\Delta}}\boldsymbol{{\tau}}$=$\boldsymbol{{{val:.4f}}}$"
         _plot_arrow(ax1, 0, tau_res['val_pre_0'], tau_res['val_post_0'],
-                    'darkslateblue', r'$\Delta \tau$=%.4f' % val, ha='right')
+                    'darkslateblue', label, ha='right')
 
     # Add specific window deltas
     _add_window_delta(ax1, t_rel, tau_sm, 1.5, 'orange', '3', symbol='\\tau')
     _add_window_delta(ax1, t_rel, tau_sm, 0.25, 'green', '0.5', symbol='\\tau')
 
     ax1.set_ylabel(r'rel. $\tau$ [MPa]')
-    ax1.set_title(f"Event {event_idx}")
+    ax1.set_title(f"Event {event_idx + 1}")
     ax1.grid(True)
 
     # --- (2) Slip ---
@@ -120,10 +124,11 @@ def generate_diagnostic_plot(
         res_slip = result.get(res_key, {})
         
         if i == target_idx and res_slip.get('valid'):
-            _draw_trend_lines(ax2, slip_pts, res_slip, color)
+            _draw_trend_lines(ax2, slip_pts, res_slip, 'darkslateblue')
             val = abs(res_slip['delta'])
+            arr_label = fr"$\boldsymbol{{\delta}}$=$\boldsymbol{{{val:.1f}}}$ $\boldsymbol{{\mu m}}$"
             _plot_arrow(ax2, 0, res_slip['val_pre_0'], res_slip['val_post_0'],
-                        color, r'$\delta$=%.1f $\mu m$' % val, ha='right')
+                        'darkslateblue', arr_label, ha='right')
             
             # Add specific window deltas for E3
             _add_window_delta(ax2, t_rel, d, 1.5, 'orange', '3', symbol='\\delta')
@@ -145,8 +150,9 @@ def generate_diagnostic_plot(
     if lvdt_res.get('valid'):
         _draw_trend_lines(ax3, lvdt_pts, lvdt_res, 'darkslateblue')
         val = abs(lvdt_res['delta'])
+        label = fr"$\boldsymbol{{\delta}}_{{\boldsymbol{{LVDT}}}}$=$\boldsymbol{{{val:.1f}}}$ $\boldsymbol{{\mu m}}$"
         _plot_arrow(ax3, 0, lvdt_res['val_pre_0'], lvdt_res['val_post_0'],
-                    'darkslateblue', r'$\delta_{LVDT}$=%.1f $\mu m$' % val, ha='right')
+                    'darkslateblue', label, ha='right')
 
     ax3.set_xlabel('time relative [s]')
     ax3.set_ylabel('LVDT slip [\u03bcm]')

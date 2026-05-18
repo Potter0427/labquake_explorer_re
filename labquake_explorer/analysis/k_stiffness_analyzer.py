@@ -238,7 +238,7 @@ def generate_k_diagnostic_plot(
     ax1.axvline(x=k_pre_end, color='blue', ls='--', alpha=0.5, lw=1)
     ax1.axvspan(k_pre_start, k_pre_end, alpha=0.08, color='blue')
     ax1.set_ylabel('LVDT slip [\u03bcm]')
-    ax1.set_title(f'Event {event_idx} - K Stiffness Analysis')
+    ax1.set_title(f'Event {event_idx + 1} - K Stiffness Analysis')
     ax1.legend(loc='upper left', fontsize='small')
     ax1.grid(True)
 
