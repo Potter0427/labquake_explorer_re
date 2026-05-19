@@ -24,7 +24,7 @@ class ColoredLinesView(tk.Toplevel):
     def __init__(self, parent, run_idx, path):
         self.parent = parent
         super().__init__(self.parent.root)
-        self.title(f"Colored Lines - Run {run_idx}")
+        self.title(f"Colored Lines - Run {run_idx + 1}")
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.run_idx = run_idx

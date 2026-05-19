@@ -19,7 +19,7 @@ class TimeHistoryView(tk.Toplevel):
     def __init__(self, parent, run_idx, path):
         self.parent = parent
         super().__init__(self.parent.root)
-        self.title(f"Time History Preview - Run {run_idx}")
+        self.title(f"Time History Preview - Run {run_idx + 1}")
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.run_idx = run_idx
@@ -108,7 +108,7 @@ class TimeHistoryView(tk.Toplevel):
 
         # Init combobox values for events
         n_events = len(self.events)
-        options = [str(i + 1) for i in range(n_events)]
+        options = [str(i) for i in range(n_events)]
         self.start_combo.config(values=options)
         self.end_combo.config(values=options)
 
@@ -198,8 +198,8 @@ class TimeHistoryView(tk.Toplevel):
         x_field = self.x_combo.get()
 
         try:
-            start_idx = int(self.start_combo.get()) - 1
-            end_idx = int(self.end_combo.get()) - 1
+            start_idx = int(self.start_combo.get())
+            end_idx = int(self.end_combo.get())
         except ValueError:
             return
 

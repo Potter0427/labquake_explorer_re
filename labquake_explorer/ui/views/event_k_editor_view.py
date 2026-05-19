@@ -43,7 +43,7 @@ class EventKEditorView(tk.Toplevel):
     def __init__(self, parent, run_idx, event_idx):
         self.parent = parent
         super().__init__(self.parent.root)
-        self.title(f"Event K Editor - Run {run_idx}")
+        self.title(f"Event K Editor - Run {run_idx + 1}")
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.run_idx = run_idx
@@ -95,7 +95,7 @@ class EventKEditorView(tk.Toplevel):
         ttk.Label(ctrl, text="Event:").grid(row=0, column=0, padx=5)
         self.event_combo = ttk.Combobox(ctrl, state="readonly", width=8)
         self.event_combo.grid(row=0, column=1, padx=5)
-        self.event_combo['values'] = [str(i + 1) for i in range(len(self.events))]
+        self.event_combo['values'] = [str(i) for i in range(len(self.events))]
         self.event_combo.current(self.event_idx)
         self.event_combo.bind("<<ComboboxSelected>>", self._on_event_change)
 
@@ -113,18 +113,28 @@ class EventKEditorView(tk.Toplevel):
         self.smooth_w_var = tk.StringVar(value=str(self.config['k_smooth_w']))
         ttk.Entry(ctrl, textvariable=self.smooth_w_var, width=6).grid(row=0, column=7, padx=3)
 
-        # Highpass freq
-        ttk.Label(ctrl, text="HP freq (Hz):").grid(row=0, column=8, padx=5)
-        self.hp_freq_var = tk.StringVar(value=str(self.config['k_highpass_freq']))
+        # Highpass / Lowpass freq
+        ttk.Label(ctrl, text="HP (Hz):").grid(row=0, column=8, padx=5)
+        self.hp_freq_var = tk.StringVar(value=str(self.config.get('k_highpass_freq', 0.0)))
         ttk.Entry(ctrl, textvariable=self.hp_freq_var, width=6).grid(row=0, column=9, padx=3)
+
+        ttk.Label(ctrl, text="LP (Hz):").grid(row=0, column=10, padx=5)
+        self.lp_freq_var = tk.StringVar(value=str(self.config.get('k_lowpass_freq', 0.0)))
+        ttk.Entry(ctrl, textvariable=self.lp_freq_var, width=6).grid(row=0, column=11, padx=3)
 
         # Buttons
         ttk.Button(ctrl, text="Recompute", command=self._recompute).grid(
-            row=0, column=10, padx=10
+            row=0, column=12, padx=10
         )
         ttk.Button(ctrl, text="Apply & Save", command=self._apply_and_save).grid(
-            row=0, column=11, padx=5
+            row=0, column=13, padx=5
         )
+
+        self.focus_y_var = tk.BooleanVar(value=True)
+        self.focus_y_check = ttk.Checkbutton(
+            ctrl, text="Focus Y", variable=self.focus_y_var, command=self._on_focus_y_changed
+        )
+        self.focus_y_check.grid(row=0, column=14, padx=5)
 
         # Build figure once – Canvas is never destroyed after this point
         self._build_figure()
@@ -136,13 +146,18 @@ class EventKEditorView(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _on_event_change(self, event=None):
-        self.event_idx = int(self.event_combo.get()) - 1
+        self.event_idx = int(self.event_combo.get())
         self._load_config()
         self._signal_cache.clear()   # invalidate cache on event switch
         self.pre_start_var.set(str(self.config['k_pre_start']))
         self.pre_end_var.set(str(self.config['k_pre_end']))
         self.smooth_w_var.set(str(self.config['k_smooth_w']))
-        self.hp_freq_var.set(str(self.config['k_highpass_freq']))
+        self.hp_freq_var.set(str(self.config.get('k_highpass_freq', 0.0)))
+        self.lp_freq_var.set(str(self.config.get('k_lowpass_freq', 0.0)))
+        self._draw_static(self._get_current_config())
+        self._recompute()
+
+    def _on_focus_y_changed(self):
         self._draw_static(self._get_current_config())
         self._recompute()
 
@@ -161,7 +176,7 @@ class EventKEditorView(tk.Toplevel):
                 cfg = k_analysis.get('config', {})
                 if isinstance(cfg, dict):
                     for k in ['k_pre_start', 'k_pre_end', 'k_smooth_w',
-                              'k_highpass_freq', 'k_window_sec']:
+                              'k_highpass_freq', 'k_lowpass_freq', 'k_window_sec']:
                         if k in cfg:
                             self.config[k] = (
                                 float(cfg[k])
@@ -174,7 +189,7 @@ class EventKEditorView(tk.Toplevel):
                     ev_key = str(self.event_idx)
                     if ev_key in per_event and isinstance(per_event[ev_key], dict):
                         ev_cfg = per_event[ev_key]
-                        for k in ['k_pre_start', 'k_pre_end', 'k_smooth_w', 'k_highpass_freq']:
+                        for k in ['k_pre_start', 'k_pre_end', 'k_smooth_w', 'k_highpass_freq', 'k_lowpass_freq']:
                             if k in ev_cfg:
                                 val = ev_cfg[k]
                                 if hasattr(val, 'item'):
@@ -191,6 +206,7 @@ class EventKEditorView(tk.Toplevel):
             cfg['k_pre_end'] = float(self.pre_end_var.get())
             cfg['k_smooth_w'] = int(self.smooth_w_var.get())
             cfg['k_highpass_freq'] = float(self.hp_freq_var.get())
+            cfg['k_lowpass_freq'] = float(self.lp_freq_var.get())
         except ValueError:
             pass
         return cfg
@@ -240,9 +256,10 @@ class EventKEditorView(tk.Toplevel):
         k_pre_start = config.get('k_pre_start', -3.0)
         w = config.get('k_smooth_w', 100)
         hp_freq = config.get('k_highpass_freq', 0.0)
+        lp_freq = config.get('k_lowpass_freq', 0.0)
         half_win = max(config.get('k_window_sec', 3.5), abs(k_pre_start) + 0.5)
 
-        cache_key = (self.event_idx, w, hp_freq, half_win)
+        cache_key = (self.event_idx, w, hp_freq, lp_freq, half_win)
 
         if cache_key in self._signal_cache:
             return self._signal_cache[cache_key]
@@ -259,10 +276,10 @@ class EventKEditorView(tk.Toplevel):
 
         tau_key = 'tau_local' if 'tau_local' in self.time_history else 'shear_pressure'
         tau_raw = self.time_history[tau_key][mask]
-        tau_proc = _process_signal(tau_raw, w, hp_freq, fs)
+        tau_proc = _process_signal(tau_raw, w, hp_freq, lp_freq, fs)
 
         lvdt_raw = self.time_history['LP_displacement'][mask]
-        lvdt_proc = _process_signal(lvdt_raw, w, hp_freq, fs)
+        lvdt_proc = _process_signal(lvdt_raw, w, hp_freq, lp_freq, fs)
 
         payload = {
             't_trig': t_trig,
@@ -291,6 +308,9 @@ class EventKEditorView(tk.Toplevel):
         """
         signals = self._get_processed_signals(config)
         if signals is None:
+            for ax in [self.ax1, self.ax2, self.ax3]:
+                ax.clear()
+            self.canvas.draw()
             return
 
         k_pre_start = config.get('k_pre_start', -3.0)
@@ -337,6 +357,14 @@ class EventKEditorView(tk.Toplevel):
         self.ax1.legend(loc='upper left', fontsize='small')
         self.ax1.grid(True)
 
+        if hasattr(self, 'focus_y_var') and self.focus_y_var.get():
+            y1_data = lvdt_proc_z[disp_mask]
+            if len(y1_data) > 0:
+                y1_min, y1_max = np.min(y1_data), np.max(y1_data)
+                y1_range = y1_max - y1_min
+                margin1 = max(0.5, y1_range * 0.1)
+                self.ax1.set_ylim(y1_min - margin1, y1_max + margin1)
+
         # ---- ax2: Tau vs time ----
         self.ax2.plot(t_rel[disp_mask], tau_raw_z[disp_mask],
                       color='C0', alpha=0.5, lw=0.8, label='Raw')
@@ -349,6 +377,14 @@ class EventKEditorView(tk.Toplevel):
         self.ax2.set_xlabel('time relative [s]')
         self.ax2.legend(loc='upper left', fontsize='small')
         self.ax2.grid(True)
+
+        if hasattr(self, 'focus_y_var') and self.focus_y_var.get():
+            y2_data = tau_proc_z[disp_mask]
+            if len(y2_data) > 0:
+                y2_min, y2_max = np.min(y2_data), np.max(y2_data)
+                y2_range = y2_max - y2_min
+                margin2 = max(0.01, y2_range * 0.1)
+                self.ax2.set_ylim(y2_min - margin2, y2_max + margin2)
 
         self._vlines_start = [l1s, l2s]
         self._vlines_end = [l1e, l2e]
@@ -441,7 +477,15 @@ class EventKEditorView(tk.Toplevel):
         self.canvas.mpl_connect('motion_notify_event', self._on_motion)
         self.canvas.mpl_connect('button_release_event', self._on_release)
 
+    def is_navigation_active(self):
+        """Check if pan or zoom tools are currently active."""
+        if hasattr(self, 'toolbar') and self.toolbar is not None:
+            return self.toolbar.mode in ['pan/zoom', 'zoom rect']
+        return False
+
     def _on_press(self, event):
+        if self.is_navigation_active():
+            return
         if event.inaxes not in (self.ax1, self.ax2) or event.button != 1:
             return
 
@@ -507,8 +551,9 @@ class EventKEditorView(tk.Toplevel):
         k_pre_start = cfg.get('k_pre_start', -3.0)
         w = cfg.get('k_smooth_w', 100)
         hp_freq = cfg.get('k_highpass_freq', 0.0)
+        lp_freq = cfg.get('k_lowpass_freq', 0.0)
         half_win = max(cfg.get('k_window_sec', 3.5), abs(k_pre_start) + 0.5)
-        new_key = (self.event_idx, w, hp_freq, half_win)
+        new_key = (self.event_idx, w, hp_freq, lp_freq, half_win)
 
         static_needs_redraw = new_key not in self._signal_cache
 
@@ -547,6 +592,7 @@ class EventKEditorView(tk.Toplevel):
                     'k_pre_end': cfg['k_pre_end'],
                     'k_smooth_w': cfg['k_smooth_w'],
                     'k_highpass_freq': cfg['k_highpass_freq'],
+                    'k_lowpass_freq': cfg.get('k_lowpass_freq', 0.0),
                 },
                 'per_event_config': {},
                 'results': {},
@@ -562,6 +608,7 @@ class EventKEditorView(tk.Toplevel):
             'k_pre_end': cfg['k_pre_end'],
             'k_smooth_w': cfg['k_smooth_w'],
             'k_highpass_freq': cfg['k_highpass_freq'],
+            'k_lowpass_freq': cfg.get('k_lowpass_freq', 0.0),
         }
 
         r = self._result
@@ -583,6 +630,31 @@ class EventKEditorView(tk.Toplevel):
             self.data_manager.fast_save_analysis(self.run_idx, k_analysis, group_name='k_analysis')
         except TypeError:
             self.data_manager.fast_save_analysis(self.run_idx, k_analysis)
+
+        # Overwrite K diagnostic plot if the directory exists
+        import os
+        from labquake_explorer.analysis.k_stiffness_analyzer import generate_k_diagnostic_plot
+        if self.data_manager.data_path:
+            h5_path = self.data_manager.data_path
+            h5_dir = str(h5_path.parent)
+            h5_stem = h5_path.stem
+            try:
+                run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
+                run_name_raw = run_data.get('name', f'run{self.run_idx+1}')
+                run_part = run_name_raw.split('_')[0] if '_' in run_name_raw else run_name_raw
+                output_dir = os.path.join(h5_dir, f"{h5_stem}_{run_part}_k")
+            except Exception:
+                output_dir = os.path.join(h5_dir, f"{h5_stem}_run{self.run_idx+1}_k")
+
+            if os.path.exists(output_dir):
+                save_path = os.path.join(output_dir, f"Event_{self.event_idx:03d}_k.png")
+                try:
+                    generate_k_diagnostic_plot(
+                        self.time_history, self.events, self.event_idx, r, cfg, save_path
+                    )
+                    print(f"Overwrote K diagnostic plot at {save_path}")
+                except Exception as e:
+                    print(f"Warning: failed to overwrite K diagnostic plot: {e}")
 
         msg = f"Event {self.event_idx} k value updated and saved."
         messagebox.showinfo("Applied & Saved", msg)

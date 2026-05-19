@@ -38,7 +38,7 @@ class EventDropEditorView(tk.Toplevel):
     def __init__(self, parent, run_idx, event_idx):
         self.parent = parent
         super().__init__(self.parent.root)
-        self.title(f"Event Drop Editor - Run {run_idx}")
+        self.title(f"Event Drop Editor - Run {run_idx + 1}")
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.run_idx = run_idx
@@ -85,7 +85,7 @@ class EventDropEditorView(tk.Toplevel):
         ttk.Label(ctrl, text="Event:").grid(row=0, column=0, padx=5)
         self.event_combo = ttk.Combobox(ctrl, state="readonly", width=8)
         self.event_combo.grid(row=0, column=1, padx=5)
-        self.event_combo['values'] = [str(i + 1) for i in range(len(self.events))]
+        self.event_combo['values'] = [str(i) for i in range(len(self.events))]
         self.event_combo.current(self.event_idx)
         self.event_combo.bind("<<ComboboxSelected>>", self._on_event_change)
 
@@ -108,7 +108,7 @@ class EventDropEditorView(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _on_event_change(self, event=None):
-        self.event_idx = int(self.event_combo.get()) - 1
+        self.event_idx = int(self.event_combo.get())
         self._load_config()
         # Redraw static layer for the new event, then recompute dynamic layer
         self._draw_static(self.config)
@@ -394,7 +394,15 @@ class EventDropEditorView(tk.Toplevel):
         self.canvas.mpl_connect('motion_notify_event', self._on_motion)
         self.canvas.mpl_connect('button_release_event', self._on_release)
 
+    def is_navigation_active(self):
+        """Check if pan or zoom tools are currently active."""
+        if hasattr(self, 'toolbar') and self.toolbar is not None:
+            return self.toolbar.mode in ['pan/zoom', 'zoom rect']
+        return False
+
     def _on_press(self, event):
+        if self.is_navigation_active():
+            return
         if event.inaxes is None or event.button != 1:
             return
 
@@ -516,6 +524,31 @@ class EventDropEditorView(tk.Toplevel):
             _ensure_array(label)[self.event_idx] = r.get(label, np.nan)
 
         self.data_manager.fast_save_analysis(self.run_idx, analysis)
+
+        # Overwrite Event Drop diagnostic plot if the directory exists
+        import os
+        from labquake_explorer.analysis.batch_runner import generate_diagnostic_plot
+        if self.data_manager.data_path:
+            h5_path = self.data_manager.data_path
+            h5_dir = str(h5_path.parent)
+            h5_stem = h5_path.stem
+            try:
+                run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
+                run_name_raw = run_data.get('name', f'run{self.run_idx+1}')
+                run_part = run_name_raw.split('_')[0] if '_' in run_name_raw else run_name_raw
+                output_dir = os.path.join(h5_dir, f"{h5_stem}_{run_part}_drop")
+            except Exception:
+                output_dir = os.path.join(h5_dir, f"{h5_stem}_run{self.run_idx+1}")
+
+            if os.path.exists(output_dir):
+                save_path = os.path.join(output_dir, f"Event_{self.event_idx:03d}.png")
+                try:
+                    generate_diagnostic_plot(
+                        self.time_history, self.events, self.event_idx, r, self.config, save_path
+                    )
+                    print(f"Overwrote Event Drop diagnostic plot at {save_path}")
+                except Exception as e:
+                    print(f"Warning: failed to overwrite Event Drop diagnostic plot: {e}")
 
         msg = f"Event {self.event_idx} updated and saved to HDF5."
         messagebox.showinfo("Applied & Saved", msg)

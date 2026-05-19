@@ -103,7 +103,7 @@ def generate_diagnostic_plot(
     _add_window_delta(ax1, t_rel, tau_sm, 0.25, 'green', '0.5', symbol='\\tau')
 
     ax1.set_ylabel(r'rel. $\tau$ [MPa]')
-    ax1.set_title(f"Event {event_idx + 1}")
+    ax1.set_title(f"Event {event_idx}")
     ax1.grid(True)
 
     # --- (2) Slip ---

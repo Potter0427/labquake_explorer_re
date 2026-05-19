@@ -24,6 +24,7 @@ DEFAULT_K_CONFIG = {
     'k_pre_end': -0.5,         # locking window end (s, relative to trigger)
     'k_smooth_w': 100,         # moving average window
     'k_highpass_freq': 0.0,    # high-pass filter cutoff frequency (Hz), 0 = off
+    'k_lowpass_freq': 0.0,     # low-pass filter cutoff frequency (Hz), 0 = off
     'k_window_sec': 3.5,       # half-window around trigger for data extraction
     'skip_events': [],
 }
@@ -43,15 +44,27 @@ def _apply_highpass(data: np.ndarray, cutoff_freq: float, fs: float) -> np.ndarr
     b, a = butter(4, cutoff_freq / nyq, btype='high')
     return filtfilt(b, a, data)
 
+def _apply_lowpass(data: np.ndarray, cutoff_freq: float, fs: float) -> np.ndarray:
+    """Apply a 4th-order Butterworth low-pass filter."""
+    if cutoff_freq <= 0 or fs <= 0:
+        return data
+    nyq = fs / 2.0
+    if cutoff_freq >= nyq:
+        return data
+    b, a = butter(4, cutoff_freq / nyq, btype='low')
+    return filtfilt(b, a, data)
 
-def _process_signal(raw: np.ndarray, w: int, hp_freq: float, fs: float) -> np.ndarray:
-    """Apply moving average then optional high-pass filter."""
+
+def _process_signal(raw: np.ndarray, w: int, hp_freq: float, lp_freq: float, fs: float) -> np.ndarray:
+    """Apply moving average then optional high-pass and low-pass filters."""
     out = moving_average(raw, w)
     # Pad if moving_average shortened the array
     if len(out) < len(raw):
         out = np.pad(out, (0, len(raw) - len(out)), 'edge')
     if hp_freq > 0 and fs > 0:
         out = _apply_highpass(out, hp_freq, fs)
+    if lp_freq > 0 and fs > 0:
+        out = _apply_lowpass(out, lp_freq, fs)
     return out
 
 
@@ -76,6 +89,7 @@ def analyze_single_k(
     k_pre_end = config.get('k_pre_end', -0.5)
     w = config.get('k_smooth_w', 100)
     hp_freq = config.get('k_highpass_freq', 0.0)
+    lp_freq = config.get('k_lowpass_freq', 0.0)
     
     # Ensure window is wide enough for pre_start
     half_win = max(config.get('k_window_sec', 3.5), abs(k_pre_start) + 0.5)
@@ -114,12 +128,12 @@ def analyze_single_k(
     # Process tau
     tau_key = 'tau_local' if 'tau_local' in time_history else 'shear_pressure'
     tau_raw = time_history[tau_key][mask]
-    tau_proc = _process_signal(tau_raw, w, hp_freq, fs)
+    tau_proc = _process_signal(tau_raw, w, hp_freq, lp_freq, fs)
     tau_proc = tau_proc - tau_proc[0]
 
     # Process LVDT
     lvdt_raw = time_history['LP_displacement'][mask]
-    lvdt_proc = _process_signal(lvdt_raw, w, hp_freq, fs)
+    lvdt_proc = _process_signal(lvdt_raw, w, hp_freq, lp_freq, fs)
     lvdt_proc = lvdt_proc - lvdt_proc[0]
 
     # Extract locking window
@@ -197,6 +211,7 @@ def generate_k_diagnostic_plot(
     k_pre_end = config.get('k_pre_end', -0.5)
     w = config.get('k_smooth_w', 100)
     hp_freq = config.get('k_highpass_freq', 0.0)
+    lp_freq = config.get('k_lowpass_freq', 0.0)
     half_win = max(config.get('k_window_sec', 3.5), abs(k_pre_start) + 0.5)
 
     t_all = time_history['time']
@@ -212,12 +227,12 @@ def generate_k_diagnostic_plot(
     # Raw and processed signals
     tau_key = 'tau_local' if 'tau_local' in time_history else 'shear_pressure'
     tau_raw = time_history[tau_key][mask]
-    tau_proc = _process_signal(tau_raw, w, hp_freq, fs)
+    tau_proc = _process_signal(tau_raw, w, hp_freq, lp_freq, fs)
     tau_raw_z = tau_raw - tau_raw[0]
     tau_proc_z = tau_proc - tau_proc[0]
 
     lvdt_raw = time_history['LP_displacement'][mask]
-    lvdt_proc = _process_signal(lvdt_raw, w, hp_freq, fs)
+    lvdt_proc = _process_signal(lvdt_raw, w, hp_freq, lp_freq, fs)
     lvdt_raw_z = lvdt_raw - lvdt_raw[0]
     lvdt_proc_z = lvdt_proc - lvdt_proc[0]
 
@@ -238,7 +253,7 @@ def generate_k_diagnostic_plot(
     ax1.axvline(x=k_pre_end, color='blue', ls='--', alpha=0.5, lw=1)
     ax1.axvspan(k_pre_start, k_pre_end, alpha=0.08, color='blue')
     ax1.set_ylabel('LVDT slip [\u03bcm]')
-    ax1.set_title(f'Event {event_idx + 1} - K Stiffness Analysis')
+    ax1.set_title(f'Event {event_idx} - K Stiffness Analysis')
     ax1.legend(loc='upper left', fontsize='small')
     ax1.grid(True)
 
