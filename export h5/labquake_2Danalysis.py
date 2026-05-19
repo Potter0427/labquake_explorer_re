@@ -226,8 +226,8 @@ class LabQuakeAnalyzer:
         _, lvdt = self.get_physical_data(self.params['lvdt_ch'], block=1, baseline_block=baseline_block)
         _, eddy = self.get_physical_data(self.params['eddy_chs'][0], block=1, baseline_block=baseline_block)
 
-        # 2. 取得所有事件的觸發時間
-        triggers = self.get_trigger_times(self.params['sigma_ch'])
+        # 2. 取得所有事件的觸發時間 (剔除代表連續全域資料的 Block 1)
+        triggers = self.get_trigger_times(self.params['sigma_ch'])[1:]
         
         # 偵測所有可用的 Block (用於高取樣事件)
         from tpc5_data_processor import TPC5DataProcessor
