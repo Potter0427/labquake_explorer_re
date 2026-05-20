@@ -239,7 +239,7 @@ class DataManager:
         else:
             raise ValueError(f"Unsupported file extension: {path.suffix}")
 
-    def fast_save_analysis(self, run_idx: int, analysis: dict) -> None:
+    def fast_save_analysis(self, run_idx: int, analysis: dict, group_name: str = 'analysis') -> None:
         """
         Directly update the analysis group in the HDF5 file without rewriting the whole file.
         Also updates the in-memory data structure.
@@ -249,7 +249,7 @@ class DataManager:
             return
         
         try:
-            self.data['runs'][run_idx]['analysis'] = analysis
+            self.data['runs'][run_idx][group_name] = analysis
         except (IndexError, KeyError):
             return
 
@@ -264,7 +264,7 @@ class DataManager:
             with h5py.File(self.data_path, 'r+') as f:
                 # Resolve the path to the analysis group
                 # Structure: runs/0/analysis, runs/1/analysis, ...
-                target_path = f"runs/{run_idx}/analysis"
+                target_path = f"runs/{run_idx}/{group_name}"
                 
                 # Delete old group if exists
                 if target_path in f:
@@ -302,7 +302,7 @@ class DataManager:
                 for k, v in analysis.items():
                     _save_recursive(analysis_group, k, v)
                     
-                print(f"Fast saved analysis for run {run_idx} to {self.data_path}")
+                print(f"Fast saved {group_name} for run {run_idx} to {self.data_path}")
         except Exception as e:
             print(f"Warning: Fast save failed: {e}")
             # Non-critical, as in-memory data is still updated

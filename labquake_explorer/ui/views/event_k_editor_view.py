@@ -99,42 +99,55 @@ class EventKEditorView(tk.Toplevel):
         self.event_combo.current(self.event_idx)
         self.event_combo.bind("<<ComboboxSelected>>", self._on_event_change)
 
-        # Pre start / end
-        ttk.Label(ctrl, text="Pre start:").grid(row=0, column=2, padx=5)
-        self.pre_start_var = tk.StringVar(value=str(self.config['k_pre_start']))
-        ttk.Entry(ctrl, textvariable=self.pre_start_var, width=8).grid(row=0, column=3, padx=3)
+        # Status Label
+        self.status_label = ttk.Label(ctrl, text="", font=("TkDefaultFont", 10, "bold"))
+        self.status_label.grid(row=0, column=2, padx=10)
 
-        ttk.Label(ctrl, text="Pre end:").grid(row=0, column=4, padx=5)
+        # Pre start / end
+        ttk.Label(ctrl, text="Pre start:").grid(row=0, column=3, padx=5)
+        self.pre_start_var = tk.StringVar(value=str(self.config['k_pre_start']))
+        ttk.Entry(ctrl, textvariable=self.pre_start_var, width=8).grid(row=0, column=4, padx=3)
+
+        ttk.Label(ctrl, text="Pre end:").grid(row=0, column=5, padx=5)
         self.pre_end_var = tk.StringVar(value=str(self.config['k_pre_end']))
-        ttk.Entry(ctrl, textvariable=self.pre_end_var, width=8).grid(row=0, column=5, padx=3)
+        ttk.Entry(ctrl, textvariable=self.pre_end_var, width=6).grid(row=0, column=6, padx=3)
 
         # Smooth w
-        ttk.Label(ctrl, text="Smooth w:").grid(row=0, column=6, padx=5)
+        ttk.Label(ctrl, text="Smooth w:").grid(row=0, column=7, padx=5)
         self.smooth_w_var = tk.StringVar(value=str(self.config['k_smooth_w']))
-        ttk.Entry(ctrl, textvariable=self.smooth_w_var, width=6).grid(row=0, column=7, padx=3)
+        ttk.Entry(ctrl, textvariable=self.smooth_w_var, width=6).grid(row=0, column=8, padx=3)
 
         # Highpass / Lowpass freq
-        ttk.Label(ctrl, text="HP (Hz):").grid(row=0, column=8, padx=5)
+        ttk.Label(ctrl, text="HP (Hz):").grid(row=0, column=9, padx=5)
         self.hp_freq_var = tk.StringVar(value=str(self.config.get('k_highpass_freq', 0.0)))
-        ttk.Entry(ctrl, textvariable=self.hp_freq_var, width=6).grid(row=0, column=9, padx=3)
+        ttk.Entry(ctrl, textvariable=self.hp_freq_var, width=6).grid(row=0, column=10, padx=3)
 
-        ttk.Label(ctrl, text="LP (Hz):").grid(row=0, column=10, padx=5)
+        ttk.Label(ctrl, text="LP (Hz):").grid(row=0, column=11, padx=5)
         self.lp_freq_var = tk.StringVar(value=str(self.config.get('k_lowpass_freq', 0.0)))
-        ttk.Entry(ctrl, textvariable=self.lp_freq_var, width=6).grid(row=0, column=11, padx=3)
+        ttk.Entry(ctrl, textvariable=self.lp_freq_var, width=6).grid(row=0, column=12, padx=3)
 
         # Buttons
         ttk.Button(ctrl, text="Recompute", command=self._recompute).grid(
-            row=0, column=12, padx=10
+            row=0, column=13, padx=10
         )
         ttk.Button(ctrl, text="Apply & Save", command=self._apply_and_save).grid(
-            row=0, column=13, padx=5
+            row=0, column=14, padx=5
+        )
+        ttk.Button(ctrl, text="Delete Event", command=self._delete_event).grid(
+            row=0, column=15, padx=5
         )
 
         self.focus_y_var = tk.BooleanVar(value=True)
         self.focus_y_check = ttk.Checkbutton(
             ctrl, text="Focus Y", variable=self.focus_y_var, command=self._on_focus_y_changed
         )
-        self.focus_y_check.grid(row=0, column=14, padx=5)
+        self.focus_y_check.grid(row=0, column=16, padx=5)
+
+        self.use_ransac_var = tk.BooleanVar(value=self.config.get('k_use_ransac', False))
+        self.use_ransac_check = ttk.Checkbutton(
+            ctrl, text="RANSAC", variable=self.use_ransac_var, command=self._recompute
+        )
+        self.use_ransac_check.grid(row=0, column=17, padx=5)
 
         # Build figure once – Canvas is never destroyed after this point
         self._build_figure()
@@ -154,6 +167,8 @@ class EventKEditorView(tk.Toplevel):
         self.smooth_w_var.set(str(self.config['k_smooth_w']))
         self.hp_freq_var.set(str(self.config.get('k_highpass_freq', 0.0)))
         self.lp_freq_var.set(str(self.config.get('k_lowpass_freq', 0.0)))
+        if hasattr(self, 'use_ransac_var'):
+            self.use_ransac_var.set(self.config.get('k_use_ransac', False))
         self._draw_static(self._get_current_config())
         self._recompute()
 
@@ -176,25 +191,37 @@ class EventKEditorView(tk.Toplevel):
                 cfg = k_analysis.get('config', {})
                 if isinstance(cfg, dict):
                     for k in ['k_pre_start', 'k_pre_end', 'k_smooth_w',
-                              'k_highpass_freq', 'k_lowpass_freq', 'k_window_sec']:
+                              'k_highpass_freq', 'k_lowpass_freq', 'k_window_sec', 'k_use_ransac', 'skip_events']:
                         if k in cfg:
-                            self.config[k] = (
-                                float(cfg[k])
-                                if 'freq' in k or 'start' in k or 'end' in k or 'sec' in k
-                                else int(cfg[k])
-                            )
+                            if k == 'k_use_ransac':
+                                self.config[k] = bool(cfg[k])
+                            elif k == 'skip_events':
+                                se = cfg[k]
+                                if hasattr(se, 'tolist'):
+                                    se = se.tolist()
+                                self.config[k] = [int(x) for x in se] if se is not None else []
+                            else:
+                                self.config[k] = (
+                                    float(cfg[k])
+                                    if 'freq' in k or 'start' in k or 'end' in k or 'sec' in k
+                                    else int(cfg[k])
+                                )
 
                 per_event = k_analysis.get('per_event_config', {})
                 if isinstance(per_event, dict):
                     ev_key = str(self.event_idx)
                     if ev_key in per_event and isinstance(per_event[ev_key], dict):
                         ev_cfg = per_event[ev_key]
-                        for k in ['k_pre_start', 'k_pre_end', 'k_smooth_w', 'k_highpass_freq', 'k_lowpass_freq']:
+                        for k in ['k_pre_start', 'k_pre_end', 'k_smooth_w',
+                                  'k_highpass_freq', 'k_lowpass_freq', 'k_use_ransac']:
                             if k in ev_cfg:
                                 val = ev_cfg[k]
                                 if hasattr(val, 'item'):
                                     val = val.item()
-                                self.config[k] = val
+                                if k == 'k_use_ransac':
+                                    self.config[k] = bool(val)
+                                else:
+                                    self.config[k] = val
         except Exception:
             pass
 
@@ -209,6 +236,8 @@ class EventKEditorView(tk.Toplevel):
             cfg['k_lowpass_freq'] = float(self.lp_freq_var.get())
         except ValueError:
             pass
+        if hasattr(self, 'use_ransac_var'):
+            cfg['k_use_ransac'] = self.use_ransac_var.get()
         return cfg
 
     # ------------------------------------------------------------------
@@ -217,15 +246,17 @@ class EventKEditorView(tk.Toplevel):
 
     def _build_figure(self):
         self.figure = Figure(figsize=(10, 10), dpi=100)
-        gs = self.figure.add_gridspec(3, 1, height_ratios=[1, 1, 1.2], hspace=0.3)
-        self.ax1 = self.figure.add_subplot(gs[0])
-        self.ax2 = self.figure.add_subplot(gs[1], sharex=self.ax1)
-        self.ax3 = self.figure.add_subplot(gs[2])
+        self._cbar = None
+        gs = self.figure.add_gridspec(3, 2, width_ratios=[15, 1], height_ratios=[1, 1, 1.2], hspace=0.3, wspace=0.05)
+        self.ax1 = self.figure.add_subplot(gs[0, 0])
+        self.ax2 = self.figure.add_subplot(gs[1, 0], sharex=self.ax1)
+        self.ax3 = self.figure.add_subplot(gs[2, 0])
+        self.ax_cbar = self.figure.add_subplot(gs[2, 1])
 
         self.ax1.set_ylabel('LVDT slip [μm]')
-        self.ax2.set_ylabel(r'$\tau$ [MPa]')
+        self.ax2.set_ylabel(r'rel. $\tau$ [MPa]')
         self.ax2.set_xlabel('time relative [s]')
-        self.ax3.set_ylabel(r'$\tau$ [MPa]')
+        self.ax3.set_ylabel(r'rel. $\tau$ [MPa]')
         self.ax3.set_xlabel('LVDT slip [μm]')
 
         self.canvas = FigureCanvasTkAgg(self.figure, master=self)
@@ -336,8 +367,9 @@ class EventKEditorView(tk.Toplevel):
         t_disp_end = abs(k_pre_start) - 1.0
         disp_mask = (t_rel >= t_disp_start) & (t_rel <= t_disp_end)
 
-        for ax in [self.ax1, self.ax2, self.ax3]:
+        for ax in [self.ax1, self.ax2, self.ax3, self.ax_cbar]:
             ax.clear()
+        self.ax_cbar.set_visible(False)
 
         # Reset dynamic Artist references
         self._vlines_start = []
@@ -373,7 +405,7 @@ class EventKEditorView(tk.Toplevel):
         l2s = self.ax2.axvline(x=k_pre_start, color='blue', ls='--', alpha=0.5, lw=1)
         l2e = self.ax2.axvline(x=k_pre_end, color='blue', ls='--', alpha=0.5, lw=1)
         self.ax2.axvspan(k_pre_start, k_pre_end, alpha=0.08, color='blue')
-        self.ax2.set_ylabel(r'$\tau$ [MPa]')
+        self.ax2.set_ylabel(r'rel. $\tau$ [MPa]')
         self.ax2.set_xlabel('time relative [s]')
         self.ax2.legend(loc='upper left', fontsize='small')
         self.ax2.grid(True)
@@ -391,7 +423,7 @@ class EventKEditorView(tk.Toplevel):
 
         # ax3 stays clear; _draw_dynamic will populate it
         self.ax3.set_xlabel('LVDT slip [μm]')
-        self.ax3.set_ylabel(r'$\tau$ [MPa]')
+        self.ax3.set_ylabel(r'rel. $\tau$ [MPa]')
         self.ax3.set_title('Pre-Rupture Stiffness')
         self.ax3.grid(True)
 
@@ -437,6 +469,9 @@ class EventKEditorView(tk.Toplevel):
 
         # ---- Redraw ax3 (cheap: scatter data only) ----
         self.ax3.clear()
+        self.ax_cbar.clear()
+        self.ax_cbar.set_visible(False)
+        self._cbar = None
 
         t_rel = getattr(self, '_t_rel_static', None)
         tau_proc_z = getattr(self, '_tau_proc_z', None)
@@ -448,8 +483,15 @@ class EventKEditorView(tk.Toplevel):
                 tau_pre = tau_proc_z[pre_mask]
                 lvdt_pre = lvdt_proc_z[pre_mask]
 
-                self.ax3.plot(lvdt_pre, tau_pre, 'o', color='teal',
-                              markersize=3, alpha=0.5, label='Data')
+                sc = self.ax3.scatter(lvdt_pre, tau_pre, c=t_rel[pre_mask], cmap='viridis',
+                                      s=8, alpha=0.6, edgecolors='none', label='Data')
+                
+                self.ax_cbar.set_visible(True)
+                try:
+                    self._cbar = self.figure.colorbar(sc, cax=self.ax_cbar)
+                    self._cbar.set_label('time relative [s]')
+                except Exception:
+                    pass
 
                 k_val = result.get('k', np.nan)
                 if not np.isnan(k_val):
@@ -462,11 +504,24 @@ class EventKEditorView(tk.Toplevel):
                 self.ax3.legend(loc='best', fontsize='small')
 
         self.ax3.set_xlabel('LVDT slip [μm]')
-        self.ax3.set_ylabel(r'$\tau$ [MPa]')
+        self.ax3.set_ylabel(r'rel. $\tau$ [MPa]')
         self.ax3.set_title('Pre-Rupture Stiffness')
         self.ax3.grid(True)
 
+        self._update_status_label()
+
+        if self.event_idx in self.config.get('skip_events', []):
+            self.ax3.text(0.5, 0.5, "EVENT SKIPPED / DELETED", color='red', fontsize=16,
+                          ha='center', va='center', transform=self.ax3.transAxes,
+                          bbox=dict(facecolor='white', alpha=0.8, edgecolor='red'))
+
         self.canvas.draw_idle()
+
+    def _update_status_label(self):
+        if self.event_idx in self.config.get('skip_events', []):
+            self.status_label.config(text="DELETED / SKIPPED", foreground="red")
+        else:
+            self.status_label.config(text="ACTIVE", foreground="green")
 
     # ------------------------------------------------------------------
     # Drag interaction
@@ -593,10 +648,33 @@ class EventKEditorView(tk.Toplevel):
                     'k_smooth_w': cfg['k_smooth_w'],
                     'k_highpass_freq': cfg['k_highpass_freq'],
                     'k_lowpass_freq': cfg.get('k_lowpass_freq', 0.0),
+                    'k_use_ransac': cfg.get('k_use_ransac', False),
+                    'skip_events': [],
                 },
                 'per_event_config': {},
                 'results': {},
             }
+        else:
+            if 'config' not in k_analysis or not isinstance(k_analysis['config'], dict):
+                k_analysis['config'] = {
+                    'k_pre_start': cfg['k_pre_start'],
+                    'k_pre_end': cfg['k_pre_end'],
+                    'k_smooth_w': cfg['k_smooth_w'],
+                    'k_highpass_freq': cfg['k_highpass_freq'],
+                    'k_lowpass_freq': cfg.get('k_lowpass_freq', 0.0),
+                    'k_use_ransac': cfg.get('k_use_ransac', False),
+                    'skip_events': [],
+                }
+            else:
+                if 'skip_events' not in k_analysis['config'] or not isinstance(k_analysis['config']['skip_events'], list):
+                    se = k_analysis['config'].get('skip_events', [])
+                    if hasattr(se, 'tolist'):
+                        se = se.tolist()
+                    k_analysis['config']['skip_events'] = [int(x) for x in se] if se is not None else []
+                
+                se = k_analysis['config']['skip_events']
+                if self.event_idx in se:
+                    se.remove(self.event_idx)
 
         if 'per_event_config' not in k_analysis or not isinstance(k_analysis['per_event_config'], dict):
             k_analysis['per_event_config'] = {}
@@ -609,6 +687,7 @@ class EventKEditorView(tk.Toplevel):
             'k_smooth_w': cfg['k_smooth_w'],
             'k_highpass_freq': cfg['k_highpass_freq'],
             'k_lowpass_freq': cfg.get('k_lowpass_freq', 0.0),
+            'k_use_ransac': cfg.get('k_use_ransac', False),
         }
 
         r = self._result
@@ -620,8 +699,11 @@ class EventKEditorView(tk.Toplevel):
                 results[key] = np.full(n_events, default_val)
             return results[key]
 
-        _ensure_array('trigger_times')[self.event_idx] = r.get('trigger_time', np.nan)
+        _ensure_array('trigger_time')[self.event_idx] = r.get('trigger_time', np.nan)
         _ensure_array('k')[self.event_idx] = r.get('k', np.nan)
+        if 'skipped' not in results or not isinstance(results['skipped'], np.ndarray):
+            results['skipped'] = np.zeros(n_events, dtype=bool)
+        results['skipped'][self.event_idx] = False
 
         run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
         run_data['k_analysis'] = k_analysis
@@ -658,6 +740,95 @@ class EventKEditorView(tk.Toplevel):
 
         msg = f"Event {self.event_idx} k value updated and saved."
         messagebox.showinfo("Applied & Saved", msg)
+
+    def _delete_event(self):
+        confirm = messagebox.askyesno(
+            "Confirm Delete",
+            f"Are you sure you want to delete/exclude Event {self.event_idx} from K Stiffness analysis?"
+        )
+        if not confirm:
+            return
+
+        try:
+            k_analysis = self.data_manager.get_data(f"runs/[{self.run_idx}]/k_analysis")
+        except (KeyError, TypeError, ValueError):
+            k_analysis = None
+
+        if k_analysis is None or not isinstance(k_analysis, dict):
+            k_analysis = {
+                'config': {
+                    'k_pre_start': self.config['k_pre_start'],
+                    'k_pre_end': self.config['k_pre_end'],
+                    'k_smooth_w': self.config['k_smooth_w'],
+                    'k_highpass_freq': self.config['k_highpass_freq'],
+                    'k_lowpass_freq': self.config.get('k_lowpass_freq', 0.0),
+                    'k_use_ransac': self.config.get('k_use_ransac', False),
+                    'skip_events': [],
+                },
+                'per_event_config': {},
+                'results': {},
+            }
+
+        if 'config' not in k_analysis or not isinstance(k_analysis['config'], dict):
+            k_analysis['config'] = {}
+        if 'skip_events' not in k_analysis['config'] or not isinstance(k_analysis['config']['skip_events'], list):
+            se = k_analysis['config'].get('skip_events', [])
+            if hasattr(se, 'tolist'):
+                se = se.tolist()
+            k_analysis['config']['skip_events'] = [int(x) for x in se] if se is not None else []
+
+        if self.event_idx not in k_analysis['config']['skip_events']:
+            k_analysis['config']['skip_events'].append(self.event_idx)
+
+        # Set results to NaN / skipped
+        results = k_analysis.setdefault('results', {})
+        n_events = len(self.events)
+
+        def _ensure_array(key, default_val=np.nan):
+            if key not in results or not isinstance(results[key], np.ndarray):
+                results[key] = np.full(n_events, default_val)
+            return results[key]
+
+        _ensure_array('trigger_time')[self.event_idx] = np.nan
+        _ensure_array('k')[self.event_idx] = np.nan
+        
+        if 'skipped' not in results or not isinstance(results['skipped'], np.ndarray):
+            results['skipped'] = np.zeros(n_events, dtype=bool)
+        results['skipped'][self.event_idx] = True
+
+        run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
+        run_data['k_analysis'] = k_analysis
+
+        try:
+            self.data_manager.fast_save_analysis(self.run_idx, k_analysis, group_name='k_analysis')
+        except TypeError:
+            self.data_manager.fast_save_analysis(self.run_idx, k_analysis)
+
+        # Delete diagnostic plot if it exists
+        import os
+        if self.data_manager.data_path:
+            h5_path = self.data_manager.data_path
+            h5_dir = str(h5_path.parent)
+            h5_stem = h5_path.stem
+            try:
+                run_name_raw = run_data.get('name', f'run{self.run_idx+1}')
+                run_part = run_name_raw.split('_')[0] if '_' in run_name_raw else run_name_raw
+                output_dir = os.path.join(h5_dir, f"{h5_stem}_{run_part}_k")
+            except Exception:
+                output_dir = os.path.join(h5_dir, f"{h5_stem}_run{self.run_idx+1}_k")
+
+            plot_path = os.path.join(output_dir, f"Event_{self.event_idx:03d}_k.png")
+            if os.path.exists(plot_path):
+                try:
+                    os.remove(plot_path)
+                    print(f"Deleted diagnostic plot at {plot_path}")
+                except Exception as e:
+                    print(f"Warning: failed to delete diagnostic plot: {e}")
+
+        # Update UI: reload configuration and recompute/redraw
+        self._load_config()
+        self._recompute()
+        messagebox.showinfo("Event Deleted", f"Event {self.event_idx} has been excluded and deleted from HDF5 and plot folder.")
 
     def on_close(self):
         if self.figure:

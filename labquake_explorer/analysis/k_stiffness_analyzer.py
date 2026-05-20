@@ -25,6 +25,7 @@ DEFAULT_K_CONFIG = {
     'k_smooth_w': 100,         # moving average window
     'k_highpass_freq': 0.0,    # high-pass filter cutoff frequency (Hz), 0 = off
     'k_lowpass_freq': 0.0,     # low-pass filter cutoff frequency (Hz), 0 = off
+    'k_use_ransac': False,     # whether to use RANSAC for line fitting
     'k_window_sec': 3.5,       # half-window around trigger for data extraction
     'skip_events': [],
 }
@@ -68,6 +69,67 @@ def _process_signal(raw: np.ndarray, w: int, hp_freq: float, lp_freq: float, fs:
     return out
 
 
+def robust_fit_ransac(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """
+    Fits a line y = k*x + c using RANSAC.
+    First tries scikit-learn's RANSACRegressor. If not installed, falls back to a
+    custom numpy-based RANSAC implementation.
+    """
+    try:
+        from sklearn.linear_model import RANSACRegressor
+        ransac = RANSACRegressor()
+        ransac.fit(x.reshape(-1, 1), y)
+        k = ransac.estimator_.coef_[0]
+        c = ransac.estimator_.intercept_
+        return np.array([k, c])
+    except ImportError:
+        n_samples = len(x)
+        if n_samples < 5:
+            return np.polyfit(x, y, 1)
+
+        # Estimate residual threshold using median absolute deviation of residuals from OLS
+        try:
+            coeffs_ols = np.polyfit(x, y, 1)
+            y_pred_ols = coeffs_ols[0] * x + coeffs_ols[1]
+            residuals_ols = np.abs(y - y_pred_ols)
+            threshold = max(1e-6, np.median(residuals_ols) * 1.5)
+        except Exception:
+            threshold = 0.05
+
+        best_inliers_count = -1
+        best_coeffs = None
+        rng = np.random.default_rng(42)
+
+        for _ in range(100):
+            # Select 2 points
+            idx = rng.choice(n_samples, 2, replace=False)
+            x_s, y_s = x[idx], y[idx]
+            dx = x_s[1] - x_s[0]
+            if abs(dx) < 1e-12:
+                continue
+            k = (y_s[1] - y_s[0]) / dx
+            c = y_s[0] - k * x_s[0]
+
+            residuals = np.abs(y - (k * x + c))
+            inliers = residuals < threshold
+            inliers_count = np.sum(inliers)
+
+            if inliers_count > best_inliers_count:
+                best_inliers_count = inliers_count
+                if inliers_count >= 2:
+                    try:
+                        coeffs = np.polyfit(x[inliers], y[inliers], 1)
+                    except Exception:
+                        coeffs = np.array([k, c])
+                else:
+                    coeffs = np.array([k, c])
+                best_coeffs = coeffs
+
+        if best_coeffs is not None:
+            return best_coeffs
+        return np.polyfit(x, y, 1)
+
+
 # ------------------------------------------------------------------
 # Single-event K analysis
 # ------------------------------------------------------------------
@@ -90,6 +152,7 @@ def analyze_single_k(
     w = config.get('k_smooth_w', 100)
     hp_freq = config.get('k_highpass_freq', 0.0)
     lp_freq = config.get('k_lowpass_freq', 0.0)
+    use_ransac = config.get('k_use_ransac', False)
     
     # Ensure window is wide enough for pre_start
     half_win = max(config.get('k_window_sec', 3.5), abs(k_pre_start) + 0.5)
@@ -142,7 +205,10 @@ def analyze_single_k(
         tau_pre = tau_proc[pre_mask]
         lvdt_pre = lvdt_proc[pre_mask]
         try:
-            coeffs = np.polyfit(lvdt_pre, tau_pre, 1)
+            if use_ransac:
+                coeffs = robust_fit_ransac(lvdt_pre, tau_pre)
+            else:
+                coeffs = np.polyfit(lvdt_pre, tau_pre, 1)
             row['k'] = coeffs[0]  # slope = stiffness
             row['k_coeffs'] = coeffs.tolist()
         except Exception:
@@ -241,10 +307,12 @@ def generate_k_diagnostic_plot(
     t_disp_end = abs(k_pre_start) - 1.0  # e.g. -3 -> +2
     disp_mask = (t_rel >= t_disp_start) & (t_rel <= t_disp_end)
 
-    fig, (ax1, ax2, ax3) = plt.subplots(
-        3, 1, figsize=(10, 10),
-        gridspec_kw={'height_ratios': [1, 1, 1.2]}
-    )
+    fig = plt.figure(figsize=(10, 10))
+    gs = fig.add_gridspec(3, 2, width_ratios=[15, 1], height_ratios=[1, 1, 1.2], hspace=0.3, wspace=0.05)
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax2 = fig.add_subplot(gs[1, 0], sharex=ax1)
+    ax3 = fig.add_subplot(gs[2, 0])
+    ax_cbar = fig.add_subplot(gs[2, 1])
 
     # --- Subplot 1: LVDT vs time ---
     ax1.plot(t_rel[disp_mask], lvdt_raw_z[disp_mask], color='C0', alpha=0.5, lw=0.8, label='Raw')
@@ -274,7 +342,9 @@ def generate_k_diagnostic_plot(
         tau_pre = tau_proc_z[pre_mask]
         lvdt_pre = lvdt_proc_z[pre_mask]
 
-        ax3.plot(lvdt_pre, tau_pre, 'o', color='teal', markersize=3, alpha=0.5, label='Data')
+        sc = ax3.scatter(lvdt_pre, tau_pre, c=t_rel[pre_mask], cmap='viridis', s=8, alpha=0.6, edgecolors='none', label='Data')
+        cbar = fig.colorbar(sc, cax=ax_cbar)
+        cbar.set_label('time relative [s]')
 
         k_val = result.get('k', np.nan)
         if not np.isnan(k_val):
@@ -285,6 +355,8 @@ def generate_k_diagnostic_plot(
                          label=fr'Fit: $k$ = {k_val:.4f} MPa/$\mu$m')
 
         ax3.legend(loc='best', fontsize='small')
+    else:
+        ax_cbar.set_visible(False)
 
     ax3.set_xlabel('LVDT slip [\u03bcm]')
     ax3.set_ylabel(r'rel. $\tau$ [MPa]')

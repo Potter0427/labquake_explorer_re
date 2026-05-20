@@ -690,6 +690,8 @@ class LabquakeExplorer:
                     if k in saved_k_cfg: cfg[k] = float(saved_k_cfg[k])
                 if 'k_smooth_w' in saved_k_cfg:
                     cfg['k_smooth_w'] = int(saved_k_cfg['k_smooth_w'])
+                if 'k_use_ransac' in saved_k_cfg:
+                    cfg['k_use_ransac'] = bool(saved_k_cfg['k_use_ransac'])
             except Exception:
                 pass
 
@@ -709,6 +711,8 @@ class LabquakeExplorer:
                             cfg[k] = float(old_cfg[k])
                     if 'k_smooth_w' in old_cfg:
                         cfg['k_smooth_w'] = int(old_cfg['k_smooth_w'])
+                    if 'k_use_ransac' in old_cfg:
+                        cfg['k_use_ransac'] = bool(old_cfg['k_use_ransac'])
                     if 'skip_events' in old_cfg:
                         se = old_cfg['skip_events']
                         if hasattr(se, 'tolist'): se = se.tolist()
@@ -757,12 +761,18 @@ class LabquakeExplorer:
         ttk.Entry(config_win, textvariable=out_var, width=50).grid(row=row, column=1, padx=5, pady=3)
         row += 1
 
+        ttk.Label(config_win, text="Use RANSAC:").grid(row=row, column=0, padx=5, pady=3, sticky='w')
+        ransac_var = tk.BooleanVar(value=cfg.get('k_use_ransac', False))
+        ttk.Checkbutton(config_win, variable=ransac_var).grid(row=row, column=1, padx=5, pady=3, sticky='w')
+        row += 1
+
         def on_run():
             cfg['k_pre_start'] = float(entries['k_pre_start'].get())
             cfg['k_pre_end'] = float(entries['k_pre_end'].get())
             cfg['k_smooth_w'] = int(entries['k_smooth_w'].get())
             cfg['k_highpass_freq'] = float(entries['k_highpass_freq'].get())
             cfg['k_lowpass_freq'] = float(entries['k_lowpass_freq'].get())
+            cfg['k_use_ransac'] = ransac_var.get()
 
             # Auto-set window_sec to cover the full pre range
             cfg['k_window_sec'] = abs(cfg['k_pre_start']) + 0.5
@@ -781,7 +791,8 @@ class LabquakeExplorer:
                 'k_pre_end': cfg['k_pre_end'],
                 'k_smooth_w': cfg['k_smooth_w'],
                 'k_highpass_freq': cfg['k_highpass_freq'],
-                'k_lowpass_freq': cfg.get('k_lowpass_freq', 0.0)
+                'k_lowpass_freq': cfg.get('k_lowpass_freq', 0.0),
+                'k_use_ransac': cfg['k_use_ransac']
             })
             UserPrefs.set('GlobalAnalysis', 'skip_events', cfg['skip_events'])
             
@@ -803,6 +814,7 @@ class LabquakeExplorer:
                         'k_smooth_w': cfg['k_smooth_w'],
                         'k_highpass_freq': cfg['k_highpass_freq'],
                         'k_lowpass_freq': cfg.get('k_lowpass_freq', 0.0),
+                        'k_use_ransac': cfg['k_use_ransac'],
                         'skip_events': cfg['skip_events'],
                     },
                     'per_event_config': {},

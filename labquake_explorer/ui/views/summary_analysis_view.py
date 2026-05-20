@@ -305,10 +305,17 @@ class SummaryAnalysisView(tk.Toplevel):
             trigs = self.results.get('trigger_time')
             if arr is None or trigs is None:
                 return None, None
-            arr = np.array(arr, dtype=float)
-            trigs = np.array(trigs, dtype=float)
-            rmask = (trigs >= t_start - 1) & (trigs <= t_end + 1)
-            return trigs[rmask] - t_offset, arr[rmask]
+            try:
+                arr = np.asarray(arr, dtype=float)
+                trigs = np.asarray(trigs, dtype=float)
+                if arr.shape != trigs.shape:
+                    min_len = min(len(arr), len(trigs))
+                    arr = arr[:min_len]
+                    trigs = trigs[:min_len]
+                rmask = (trigs >= t_start - 1) & (trigs <= t_end + 1)
+                return trigs[rmask] - t_offset, arr[rmask]
+            except Exception:
+                return None, None
 
         # --- (1) Slip ---
         if 'slip' in self.axs_map:
@@ -435,7 +442,7 @@ class SummaryAnalysisView(tk.Toplevel):
 
             has_data = False
             if k_results and isinstance(k_results, dict):
-                k_trigger = k_results.get('trigger_times', k_results.get('trigger_time', None))
+                k_trigger = k_results.get('trigger_time', k_results.get('trigger_times', None))
                 k_vals = k_results.get('k', None)
                 if k_trigger is not None and k_vals is not None:
                     k_trigger = np.asarray(k_trigger)

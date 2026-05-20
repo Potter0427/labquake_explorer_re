@@ -89,13 +89,20 @@ class EventDropEditorView(tk.Toplevel):
         self.event_combo.current(self.event_idx)
         self.event_combo.bind("<<ComboboxSelected>>", self._on_event_change)
 
-        ttk.Label(ctrl, text="Drag the 4 vertical lines on each plot to set the 2 pre-drop and 2 post-drop points.").grid(row=0, column=2, padx=15, sticky='w')
+        # Status Label
+        self.status_label = ttk.Label(ctrl, text="", font=("TkDefaultFont", 10, "bold"))
+        self.status_label.grid(row=0, column=2, padx=10)
+
+        ttk.Label(ctrl, text="Drag the 4 vertical lines on each plot to set the 2 pre-drop and 2 post-drop points.").grid(row=0, column=3, padx=15, sticky='w')
 
         ttk.Button(ctrl, text="Recompute", command=self._recompute).grid(
-            row=0, column=7, padx=5
+            row=0, column=4, padx=5
         )
         ttk.Button(ctrl, text="Apply & Save", command=self._apply_and_save).grid(
-            row=0, column=8, padx=5
+            row=0, column=5, padx=5
+        )
+        ttk.Button(ctrl, text="Delete Event", command=self._delete_event).grid(
+            row=0, column=6, padx=5
         )
 
         # Build figure once – Canvas is never destroyed after this point
@@ -129,9 +136,15 @@ class EventDropEditorView(tk.Toplevel):
                 cfg = analysis.get('config', {})
                 if isinstance(cfg, dict):
                     for k in ['pre_win', 'post_win', 'tau_smooth_w', 'lvdt_smooth_w',
-                              'push_speed', 'delay_sec', 'window_sec']:
+                              'push_speed', 'delay_sec', 'window_sec', 'skip_events']:
                         if k in cfg:
-                            self.config[k] = cfg[k]
+                            if k == 'skip_events':
+                                se = cfg[k]
+                                if hasattr(se, 'tolist'):
+                                    se = se.tolist()
+                                self.config[k] = [int(x) for x in se] if se is not None else []
+                            else:
+                                self.config[k] = cfg[k]
 
                 raw_pew = analysis.get('per_event_windows', {})
                 if isinstance(raw_pew, list):
@@ -383,7 +396,21 @@ class EventDropEditorView(tk.Toplevel):
                                 color='darkslateblue', fontweight='bold', fontsize=10)
             self._annotations.extend([ann, txt])
 
+        self._update_status_label()
+
+        if self.event_idx in self.config.get('skip_events', []):
+            txt = self.ax1.text(0.5, 0.5, "EVENT SKIPPED / DELETED", color='red', fontsize=16,
+                                ha='center', va='center', transform=self.ax1.transAxes,
+                                bbox=dict(facecolor='white', alpha=0.8, edgecolor='red'))
+            self._annotations.append(txt)
+
         self.canvas.draw_idle()
+
+    def _update_status_label(self):
+        if self.event_idx in self.config.get('skip_events', []):
+            self.status_label.config(text="DELETED / SKIPPED", foreground="red")
+        else:
+            self.status_label.config(text="ACTIVE", foreground="green")
 
     # ------------------------------------------------------------------
     # Drag interaction
@@ -494,6 +521,21 @@ class EventDropEditorView(tk.Toplevel):
                 'per_event_windows': {},
                 'results': {},
             }
+            se = analysis['config'].setdefault('skip_events', [])
+            if self.event_idx in se:
+                se.remove(self.event_idx)
+        else:
+            if 'config' not in analysis or not isinstance(analysis['config'], dict):
+                analysis['config'] = dict(self.config)
+            else:
+                se = self.config.get('skip_events', [])
+                analysis['config']['skip_events'] = list(se)
+            
+            se = analysis['config']['skip_events']
+            if self.event_idx in se:
+                se.remove(self.event_idx)
+            
+            self.config['skip_events'] = list(se)
 
         if 'per_event_windows' not in analysis or not isinstance(analysis['per_event_windows'], dict):
             analysis['per_event_windows'] = {}
@@ -511,7 +553,7 @@ class EventDropEditorView(tk.Toplevel):
                 results[key] = np.full(n_events, default_val)
             return results[key]
 
-        _ensure_array('trigger_times')[self.event_idx] = r.get('trigger_time', np.nan)
+        _ensure_array('trigger_time')[self.event_idx] = r.get('trigger_time', np.nan)
         _ensure_array('delta_tau')[self.event_idx] = r.get('delta_tau', np.nan)
         _ensure_array('delta_lvdt')[self.event_idx] = r.get('delta_lvdt', np.nan)
         _ensure_array('D_Push')[self.event_idx] = r.get('D_Push', np.nan)
@@ -522,6 +564,10 @@ class EventDropEditorView(tk.Toplevel):
         for i in range(len(eddy_keys)):
             label = f'delta_E{i+1}'
             _ensure_array(label)[self.event_idx] = r.get(label, np.nan)
+
+        if 'skipped' not in results or not isinstance(results['skipped'], np.ndarray):
+            results['skipped'] = np.zeros(n_events, dtype=bool)
+        results['skipped'][self.event_idx] = False
 
         self.data_manager.fast_save_analysis(self.run_idx, analysis)
 
@@ -552,6 +598,90 @@ class EventDropEditorView(tk.Toplevel):
 
         msg = f"Event {self.event_idx} updated and saved to HDF5."
         messagebox.showinfo("Applied & Saved", msg)
+
+    def _delete_event(self):
+        confirm = messagebox.askyesno(
+            "Confirm Delete",
+            f"Are you sure you want to delete/exclude Event {self.event_idx} from Event Drop analysis?"
+        )
+        if not confirm:
+            return
+
+        try:
+            analysis = self.data_manager.get_data(f"runs/[{self.run_idx}]/analysis")
+        except (KeyError, TypeError, ValueError):
+            analysis = None
+
+        if analysis is None or not isinstance(analysis, dict):
+            analysis = {
+                'config': dict(self.config),
+                'per_event_windows': {},
+                'results': {},
+            }
+
+        if 'config' not in analysis or not isinstance(analysis['config'], dict):
+            analysis['config'] = {}
+        if 'skip_events' not in analysis['config'] or not isinstance(analysis['config']['skip_events'], list):
+            se = analysis['config'].get('skip_events', [])
+            if hasattr(se, 'tolist'):
+                se = se.tolist()
+            analysis['config']['skip_events'] = [int(x) for x in se] if se is not None else []
+
+        if self.event_idx not in analysis['config']['skip_events']:
+            analysis['config']['skip_events'].append(self.event_idx)
+
+        # Set results to NaN / skipped
+        results = analysis.setdefault('results', {})
+        n_events = len(self.events)
+
+        def _ensure_array(key, default_val=np.nan):
+            if key not in results or not isinstance(results[key], np.ndarray):
+                results[key] = np.full(n_events, default_val)
+            return results[key]
+
+        _ensure_array('trigger_time')[self.event_idx] = np.nan
+        _ensure_array('delta_tau')[self.event_idx] = np.nan
+        _ensure_array('delta_lvdt')[self.event_idx] = np.nan
+        _ensure_array('D_Push')[self.event_idx] = np.nan
+        _ensure_array('D_max')[self.event_idx] = np.nan
+        _ensure_array('D_E3')[self.event_idx] = np.nan
+
+        eddy_keys = sorted([k for k in self.time_history.keys() if 'eddy' in k.lower()])
+        for i in range(len(eddy_keys)):
+            _ensure_array(f'delta_E{i+1}')[self.event_idx] = np.nan
+
+        if 'skipped' not in results or not isinstance(results['skipped'], np.ndarray):
+            results['skipped'] = np.zeros(n_events, dtype=bool)
+        results['skipped'][self.event_idx] = True
+
+        self.data_manager.fast_save_analysis(self.run_idx, analysis)
+
+        # Delete diagnostic plot if it exists
+        import os
+        if self.data_manager.data_path:
+            h5_path = self.data_manager.data_path
+            h5_dir = str(h5_path.parent)
+            h5_stem = h5_path.stem
+            try:
+                run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
+                run_name_raw = run_data.get('name', f'run{self.run_idx+1}')
+                run_part = run_name_raw.split('_')[0] if '_' in run_name_raw else run_name_raw
+                output_dir = os.path.join(h5_dir, f"{h5_stem}_{run_part}_drop")
+            except Exception:
+                output_dir = os.path.join(h5_dir, f"{h5_stem}_run{self.run_idx+1}")
+
+            plot_path = os.path.join(output_dir, f"Event_{self.event_idx:03d}.png")
+            if os.path.exists(plot_path):
+                try:
+                    os.remove(plot_path)
+                    print(f"Deleted diagnostic plot at {plot_path}")
+                except Exception as e:
+                    print(f"Warning: failed to delete diagnostic plot: {e}")
+
+        # Update UI: reload configuration and recompute/redraw
+        self._load_config()
+        self._recompute()
+        messagebox.showinfo("Event Deleted", f"Event {self.event_idx} has been excluded and deleted from HDF5 and plot folder.")
 
     def on_close(self):
         if self.figure:
