@@ -69,6 +69,7 @@ class EventDropEditorView(tk.Toplevel):
         self.canvas = None
         self.toolbar = None
         self._drag_line = None  # (ax_name, point_idx)
+        self._preview_active = False  # True while recompute preview overrides skip state
 
         # Dynamic Artist handles – populated by _draw_static / _draw_dynamic
         self._vlines = {'tau': [], 'slip': [], 'lvdt': []}
@@ -83,26 +84,28 @@ class EventDropEditorView(tk.Toplevel):
         ctrl.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
 
         ttk.Label(ctrl, text="Event:").grid(row=0, column=0, padx=5)
+        ttk.Button(ctrl, text="< Prev", command=self._go_prev).grid(row=0, column=1, padx=2)
         self.event_combo = ttk.Combobox(ctrl, state="readonly", width=8)
-        self.event_combo.grid(row=0, column=1, padx=5)
+        self.event_combo.grid(row=0, column=2, padx=2)
         self.event_combo['values'] = [str(i) for i in range(len(self.events))]
         self.event_combo.current(self.event_idx)
         self.event_combo.bind("<<ComboboxSelected>>", self._on_event_change)
+        ttk.Button(ctrl, text="Next >", command=self._go_next).grid(row=0, column=3, padx=2)
 
         # Status Label
         self.status_label = ttk.Label(ctrl, text="", font=("TkDefaultFont", 10, "bold"))
-        self.status_label.grid(row=0, column=2, padx=10)
+        self.status_label.grid(row=0, column=4, padx=10)
 
-        ttk.Label(ctrl, text="Drag the 4 vertical lines on each plot to set the 2 pre-drop and 2 post-drop points.").grid(row=0, column=3, padx=15, sticky='w')
+        ttk.Label(ctrl, text="Drag the 4 vertical lines on each plot to set the 2 pre-drop and 2 post-drop points.").grid(row=0, column=5, padx=15, sticky='w')
 
-        ttk.Button(ctrl, text="Recompute", command=self._recompute).grid(
-            row=0, column=4, padx=5
+        ttk.Button(ctrl, text="Recompute", command=self._recompute_preview).grid(
+            row=0, column=6, padx=5
         )
         ttk.Button(ctrl, text="Apply & Save", command=self._apply_and_save).grid(
-            row=0, column=5, padx=5
+            row=0, column=7, padx=5
         )
         ttk.Button(ctrl, text="Delete Event", command=self._delete_event).grid(
-            row=0, column=6, padx=5
+            row=0, column=8, padx=5
         )
 
         # Build figure once – Canvas is never destroyed after this point
@@ -116,10 +119,23 @@ class EventDropEditorView(tk.Toplevel):
 
     def _on_event_change(self, event=None):
         self.event_idx = int(self.event_combo.get())
+        self._preview_active = False
         self._load_config()
         # Redraw static layer for the new event, then recompute dynamic layer
         self._draw_static(self.config)
         self._recompute()
+
+    def _go_prev(self):
+        if self.event_idx <= 0:
+            return
+        self.event_combo.current(self.event_idx - 1)
+        self._on_event_change()
+
+    def _go_next(self):
+        if self.event_idx >= len(self.events) - 1:
+            return
+        self.event_combo.current(self.event_idx + 1)
+        self._on_event_change()
 
     # ------------------------------------------------------------------
     # Config loading
@@ -356,7 +372,7 @@ class EventDropEditorView(tk.Toplevel):
             line.set_xdata([self.pts['tau'][i], self.pts['tau'][i]])
         _add_fit_lines(self.ax1, self.pts['tau'], tau_res, 'darkslateblue')
         _add_annotation(self.ax1, self.pts['tau'], tau_res,
-                        r'$\Delta\tau$=%.4f', 'darkslateblue', fontsize=10)
+                        r'$\boldsymbol{\Delta}\boldsymbol{\tau}$=$\boldsymbol{%.4f}$', 'darkslateblue', fontsize=10)
 
         # ---- Slip vlines + fit ----
         eddy_colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple',
@@ -367,17 +383,17 @@ class EventDropEditorView(tk.Toplevel):
         if target_idx >= 0:
             res_key = f'delta_E{target_idx + 1}_res'
             res_slip = result.get(res_key, {})
-            color = eddy_colors[target_idx % len(eddy_colors)]
-            _add_fit_lines(self.ax2, self.pts['slip'], res_slip, color)
+            slip_color = 'darkslateblue'
+            _add_fit_lines(self.ax2, self.pts['slip'], res_slip, slip_color)
             if res_slip.get('valid'):
                 val = abs(res_slip['delta'])
                 ann = self.ax2.annotate('', xy=(0, res_slip['val_post_0']),
                                         xytext=(0, res_slip['val_pre_0']),
-                                        arrowprops=dict(arrowstyle='<->', color=color, lw=2))
+                                        arrowprops=dict(arrowstyle='<->', color=slip_color, lw=2))
                 txt = self.ax2.text(0.1, (res_slip['val_pre_0'] + res_slip['val_post_0']) / 2,
-                                    fr"$\delta_{{E{target_idx + 1}}}$={val:.1f}",
+                                    fr"$\boldsymbol{{\delta}}$=$\boldsymbol{{{val:.1f}}}$ $\boldsymbol{{\mu m}}$",
                                     ha='left', va='center',
-                                    color=color, fontweight='bold', fontsize=8)
+                                    color=slip_color, fontweight='bold', fontsize=10)
                 self._annotations.extend([ann, txt])
 
         # ---- LVDT vlines + fit ----
@@ -391,14 +407,15 @@ class EventDropEditorView(tk.Toplevel):
                                     xytext=(0, lvdt_res['val_pre_0']),
                                     arrowprops=dict(arrowstyle='<->', color='darkslateblue', lw=2.5))
             txt = self.ax3.text(0.1, (lvdt_res['val_pre_0'] + lvdt_res['val_post_0']) / 2,
-                                fr"$\delta_{{LVDT}}$={val:.1f} $\mu m$",
+                                fr"$\boldsymbol{{\delta}}_{{\boldsymbol{{LVDT}}}}$=$\boldsymbol{{{val:.1f}}}$ $\boldsymbol{{\mu m}}$",
                                 ha='left', va='center',
                                 color='darkslateblue', fontweight='bold', fontsize=10)
             self._annotations.extend([ann, txt])
 
         self._update_status_label()
 
-        if self.event_idx in self.config.get('skip_events', []):
+        is_skipped = (self.event_idx in self.config.get('skip_events', []))
+        if is_skipped and not self._preview_active:
             txt = self.ax1.text(0.5, 0.5, "EVENT SKIPPED / DELETED", color='red', fontsize=16,
                                 ha='center', va='center', transform=self.ax1.transAxes,
                                 bbox=dict(facecolor='white', alpha=0.8, edgecolor='red'))
@@ -407,8 +424,11 @@ class EventDropEditorView(tk.Toplevel):
         self.canvas.draw_idle()
 
     def _update_status_label(self):
-        if self.event_idx in self.config.get('skip_events', []):
+        is_skipped = (self.event_idx in self.config.get('skip_events', []))
+        if is_skipped and not self._preview_active:
             self.status_label.config(text="DELETED / SKIPPED", foreground="red")
+        elif is_skipped and self._preview_active:
+            self.status_label.config(text="PREVIEW (unsaved)", foreground="orange")
         else:
             self.status_label.config(text="ACTIVE", foreground="green")
 
@@ -479,6 +499,13 @@ class EventDropEditorView(tk.Toplevel):
     # Recompute
     # ------------------------------------------------------------------
 
+    def _recompute_preview(self):
+        """Called by the Recompute button: show computed lines even if event
+        is skipped.  Sets _preview_active so the red overlay is suppressed."""
+        if self.event_idx in self.config.get('skip_events', []):
+            self._preview_active = True
+        self._recompute()
+
     def _recompute(self):
         cfg = dict(self.config)
         cfg['per_event_windows'] = {
@@ -489,6 +516,13 @@ class EventDropEditorView(tk.Toplevel):
             }
         }
 
+        # Force computation if we are previewing a deleted event
+        if self._preview_active and 'skip_events' in cfg:
+            skip_list = list(cfg['skip_events'])
+            if self.event_idx in skip_list:
+                skip_list.remove(self.event_idx)
+            cfg['skip_events'] = skip_list
+
         result = analyze_single_event(
             self.time_history, self.events, self.event_idx, cfg
         )
@@ -498,6 +532,57 @@ class EventDropEditorView(tk.Toplevel):
     # ------------------------------------------------------------------
     # Save
     # ------------------------------------------------------------------
+
+    def _sync_skip_to_other(self, event_idx, action='add'):
+        """Sync skip state to k_analysis so both editors stay in step.
+
+        action: 'add' marks the event as skipped (sets k=NaN, skipped=True);
+                'remove' restores it (clears skipped flag; k stays NaN until
+                K Editor re-runs Apply & Save for that event).
+        """
+        try:
+            other = self.data_manager.get_data(f"runs/[{self.run_idx}]/k_analysis")
+            if other is None or not isinstance(other, dict):
+                other = {'config': {'skip_events': []}, 'per_event_config': {}, 'results': {}}
+            cfg = other.setdefault('config', {})
+            se = cfg.get('skip_events', [])
+            if hasattr(se, 'tolist'):
+                se = se.tolist()
+            elif not hasattr(se, '__iter__'):
+                se = [int(se)] if se is not None else []
+            se = [int(x) for x in se]
+            if action == 'add' and event_idx not in se:
+                se.append(event_idx)
+            elif action == 'remove' and event_idx in se:
+                se.remove(event_idx)
+            cfg['skip_events'] = se
+
+            # Also update results arrays so Summary can filter with ~isnan
+            results = other.setdefault('results', {})
+            n_events = len(self.events)
+
+            def _ensure_arr(key, default_val=np.nan):
+                if key not in results or not isinstance(results[key], np.ndarray):
+                    results[key] = np.full(n_events, default_val)
+                return results[key]
+
+            if action == 'add':
+                _ensure_arr('k')[event_idx] = np.nan
+                skipped = results.get('skipped')
+                if skipped is None or not isinstance(skipped, np.ndarray):
+                    results['skipped'] = np.zeros(n_events, dtype=bool)
+                results['skipped'][event_idx] = True
+            else:  # remove
+                skipped = results.get('skipped')
+                if skipped is not None and isinstance(skipped, np.ndarray) and event_idx < len(skipped):
+                    results['skipped'][event_idx] = False
+
+            try:
+                self.data_manager.fast_save_analysis(self.run_idx, other, group_name='k_analysis')
+            except TypeError:
+                self.data_manager.fast_save_analysis(self.run_idx, other)
+        except Exception as e:
+            print(f"Warning: failed to sync skip_events to k_analysis: {e}")
 
     def _apply_and_save(self):
         if not hasattr(self, '_result'):
@@ -596,6 +681,10 @@ class EventDropEditorView(tk.Toplevel):
                 except Exception as e:
                     print(f"Warning: failed to overwrite Event Drop diagnostic plot: {e}")
 
+        # Sync the restored state to k_analysis so both editors agree
+        self._sync_skip_to_other(self.event_idx, action='remove')
+        self._preview_active = False
+
         msg = f"Event {self.event_idx} updated and saved to HDF5."
         messagebox.showinfo("Applied & Saved", msg)
 
@@ -625,6 +714,8 @@ class EventDropEditorView(tk.Toplevel):
             se = analysis['config'].get('skip_events', [])
             if hasattr(se, 'tolist'):
                 se = se.tolist()
+            elif not hasattr(se, '__iter__'):
+                se = [se] if se is not None else []
             analysis['config']['skip_events'] = [int(x) for x in se] if se is not None else []
 
         if self.event_idx not in analysis['config']['skip_events']:
@@ -678,7 +769,11 @@ class EventDropEditorView(tk.Toplevel):
                 except Exception as e:
                     print(f"Warning: failed to delete diagnostic plot: {e}")
 
-        # Update UI: reload configuration and recompute/redraw
+        # Sync the deleted state to k_analysis so both editors agree
+        self._sync_skip_to_other(self.event_idx, action='add')
+
+        # Update UI: reload configuration (preview OFF so red overlay shows) and redraw
+        self._preview_active = False
         self._load_config()
         self._recompute()
         messagebox.showinfo("Event Deleted", f"Event {self.event_idx} has been excluded and deleted from HDF5 and plot folder.")

@@ -207,9 +207,12 @@ class LabquakeExplorer:
 
         # Remember which nodes were expanded and the current scroll position
         opened_paths = self._get_open_paths()
-        selected_text = None
+        selected_path = None
         if self.data_tree.selection():
-            selected_text = self.data_tree.item(self.data_tree.selection()[0], "text")
+            try:
+                selected_path = self.get_full_path(self.data_tree.selection()[0])[0]
+            except Exception:
+                pass
         y_scroll = self.data_tree.yview()
 
         self.init_data_tree()
@@ -221,9 +224,11 @@ class LabquakeExplorer:
         # Restore scroll position
         self.data_tree.yview_moveto(y_scroll[0] if y_scroll else 0)
 
-        # Try to re-select the previously selected item by matching its label
-        if selected_text:
-            self._select_by_text(selected_text)
+        # Try to re-select the previously selected item by matching its full path
+        if selected_path:
+            for item in self.data_tree.get_children(""):
+                if self._find_and_focus_item(item, selected_path):
+                    break
 
     def _select_by_text(self, target_text, parent=""):
         """Find and select a tree item by its label text."""

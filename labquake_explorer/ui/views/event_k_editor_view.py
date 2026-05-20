@@ -77,6 +77,7 @@ class EventKEditorView(tk.Toplevel):
         # Signal computation cache: holds result of last _process_signal call.
         # Key: (event_idx, w, hp_freq, half_win)
         self._signal_cache: dict = {}
+        self._preview_active = False  # True while recompute preview overrides skip state
 
         # Dynamic Artist handles
         self._vlines_start: list = []
@@ -93,61 +94,63 @@ class EventKEditorView(tk.Toplevel):
 
         # Event selector
         ttk.Label(ctrl, text="Event:").grid(row=0, column=0, padx=5)
+        ttk.Button(ctrl, text="< Prev", command=self._go_prev).grid(row=0, column=1, padx=2)
         self.event_combo = ttk.Combobox(ctrl, state="readonly", width=8)
-        self.event_combo.grid(row=0, column=1, padx=5)
+        self.event_combo.grid(row=0, column=2, padx=2)
         self.event_combo['values'] = [str(i) for i in range(len(self.events))]
         self.event_combo.current(self.event_idx)
         self.event_combo.bind("<<ComboboxSelected>>", self._on_event_change)
+        ttk.Button(ctrl, text="Next >", command=self._go_next).grid(row=0, column=3, padx=2)
 
         # Status Label
         self.status_label = ttk.Label(ctrl, text="", font=("TkDefaultFont", 10, "bold"))
-        self.status_label.grid(row=0, column=2, padx=10)
+        self.status_label.grid(row=0, column=4, padx=10)
 
         # Pre start / end
-        ttk.Label(ctrl, text="Pre start:").grid(row=0, column=3, padx=5)
+        ttk.Label(ctrl, text="Pre start:").grid(row=0, column=5, padx=5)
         self.pre_start_var = tk.StringVar(value=str(self.config['k_pre_start']))
-        ttk.Entry(ctrl, textvariable=self.pre_start_var, width=8).grid(row=0, column=4, padx=3)
+        ttk.Entry(ctrl, textvariable=self.pre_start_var, width=8).grid(row=0, column=6, padx=3)
 
-        ttk.Label(ctrl, text="Pre end:").grid(row=0, column=5, padx=5)
+        ttk.Label(ctrl, text="Pre end:").grid(row=0, column=7, padx=5)
         self.pre_end_var = tk.StringVar(value=str(self.config['k_pre_end']))
-        ttk.Entry(ctrl, textvariable=self.pre_end_var, width=6).grid(row=0, column=6, padx=3)
+        ttk.Entry(ctrl, textvariable=self.pre_end_var, width=6).grid(row=0, column=8, padx=3)
 
         # Smooth w
-        ttk.Label(ctrl, text="Smooth w:").grid(row=0, column=7, padx=5)
+        ttk.Label(ctrl, text="Smooth w:").grid(row=0, column=9, padx=5)
         self.smooth_w_var = tk.StringVar(value=str(self.config['k_smooth_w']))
-        ttk.Entry(ctrl, textvariable=self.smooth_w_var, width=6).grid(row=0, column=8, padx=3)
+        ttk.Entry(ctrl, textvariable=self.smooth_w_var, width=6).grid(row=0, column=10, padx=3)
 
         # Highpass / Lowpass freq
-        ttk.Label(ctrl, text="HP (Hz):").grid(row=0, column=9, padx=5)
+        ttk.Label(ctrl, text="HP (Hz):").grid(row=0, column=11, padx=5)
         self.hp_freq_var = tk.StringVar(value=str(self.config.get('k_highpass_freq', 0.0)))
-        ttk.Entry(ctrl, textvariable=self.hp_freq_var, width=6).grid(row=0, column=10, padx=3)
+        ttk.Entry(ctrl, textvariable=self.hp_freq_var, width=6).grid(row=0, column=12, padx=3)
 
-        ttk.Label(ctrl, text="LP (Hz):").grid(row=0, column=11, padx=5)
+        ttk.Label(ctrl, text="LP (Hz):").grid(row=0, column=13, padx=5)
         self.lp_freq_var = tk.StringVar(value=str(self.config.get('k_lowpass_freq', 0.0)))
-        ttk.Entry(ctrl, textvariable=self.lp_freq_var, width=6).grid(row=0, column=12, padx=3)
+        ttk.Entry(ctrl, textvariable=self.lp_freq_var, width=6).grid(row=0, column=14, padx=3)
 
         # Buttons
-        ttk.Button(ctrl, text="Recompute", command=self._recompute).grid(
-            row=0, column=13, padx=10
+        ttk.Button(ctrl, text="Recompute", command=self._recompute_preview).grid(
+            row=0, column=15, padx=10
         )
         ttk.Button(ctrl, text="Apply & Save", command=self._apply_and_save).grid(
-            row=0, column=14, padx=5
+            row=0, column=16, padx=5
         )
         ttk.Button(ctrl, text="Delete Event", command=self._delete_event).grid(
-            row=0, column=15, padx=5
+            row=0, column=17, padx=5
         )
 
         self.focus_y_var = tk.BooleanVar(value=True)
         self.focus_y_check = ttk.Checkbutton(
             ctrl, text="Focus Y", variable=self.focus_y_var, command=self._on_focus_y_changed
         )
-        self.focus_y_check.grid(row=0, column=16, padx=5)
+        self.focus_y_check.grid(row=0, column=18, padx=5)
 
         self.use_ransac_var = tk.BooleanVar(value=self.config.get('k_use_ransac', False))
         self.use_ransac_check = ttk.Checkbutton(
             ctrl, text="RANSAC", variable=self.use_ransac_var, command=self._recompute
         )
-        self.use_ransac_check.grid(row=0, column=17, padx=5)
+        self.use_ransac_check.grid(row=0, column=19, padx=5)
 
         # Build figure once – Canvas is never destroyed after this point
         self._build_figure()
@@ -160,6 +163,7 @@ class EventKEditorView(tk.Toplevel):
 
     def _on_event_change(self, event=None):
         self.event_idx = int(self.event_combo.get())
+        self._preview_active = False
         self._load_config()
         self._signal_cache.clear()   # invalidate cache on event switch
         self.pre_start_var.set(str(self.config['k_pre_start']))
@@ -171,6 +175,18 @@ class EventKEditorView(tk.Toplevel):
             self.use_ransac_var.set(self.config.get('k_use_ransac', False))
         self._draw_static(self._get_current_config())
         self._recompute()
+
+    def _go_prev(self):
+        if self.event_idx <= 0:
+            return
+        self.event_combo.current(self.event_idx - 1)
+        self._on_event_change()
+
+    def _go_next(self):
+        if self.event_idx >= len(self.events) - 1:
+            return
+        self.event_combo.current(self.event_idx + 1)
+        self._on_event_change()
 
     def _on_focus_y_changed(self):
         self._draw_static(self._get_current_config())
@@ -510,7 +526,8 @@ class EventKEditorView(tk.Toplevel):
 
         self._update_status_label()
 
-        if self.event_idx in self.config.get('skip_events', []):
+        is_skipped = (self.event_idx in self.config.get('skip_events', []))
+        if is_skipped and not self._preview_active:
             self.ax3.text(0.5, 0.5, "EVENT SKIPPED / DELETED", color='red', fontsize=16,
                           ha='center', va='center', transform=self.ax3.transAxes,
                           bbox=dict(facecolor='white', alpha=0.8, edgecolor='red'))
@@ -518,8 +535,11 @@ class EventKEditorView(tk.Toplevel):
         self.canvas.draw_idle()
 
     def _update_status_label(self):
-        if self.event_idx in self.config.get('skip_events', []):
+        is_skipped = (self.event_idx in self.config.get('skip_events', []))
+        if is_skipped and not self._preview_active:
             self.status_label.config(text="DELETED / SKIPPED", foreground="red")
+        elif is_skipped and self._preview_active:
+            self.status_label.config(text="PREVIEW (unsaved)", foreground="orange")
         else:
             self.status_label.config(text="ACTIVE", foreground="green")
 
@@ -600,6 +620,13 @@ class EventKEditorView(tk.Toplevel):
     def _recompute(self):
         cfg = self._get_current_config()
 
+        # Force computation if we are previewing a deleted event
+        if self._preview_active and 'skip_events' in cfg:
+            skip_list = list(cfg['skip_events'])
+            if self.event_idx in skip_list:
+                skip_list.remove(self.event_idx)
+            cfg['skip_events'] = skip_list
+
         # Check whether signal-shaping parameters changed; if so, invalidate
         # the static layer and redraw it (this triggers _draw_static which also
         # repopulates the cache with the new w / hp_freq / half_win).
@@ -627,6 +654,65 @@ class EventKEditorView(tk.Toplevel):
     # ------------------------------------------------------------------
     # Save
     # ------------------------------------------------------------------
+
+    def _recompute_preview(self):
+        """Called by the Recompute button: show computed lines even if event
+        is skipped.  Sets _preview_active so the red overlay is suppressed."""
+        if self.event_idx in self.config.get('skip_events', []):
+            self._preview_active = True
+        self._recompute()
+
+    def _sync_skip_to_other(self, event_idx, action='add'):
+        """Sync skip state to analysis so both editors stay in step.
+
+        action: 'add' marks the event as skipped (sets drop results=NaN, skipped=True);
+                'remove' clears the skipped flag.
+        """
+        try:
+            other = self.data_manager.get_data(f"runs/[{self.run_idx}]/analysis")
+            if other is None or not isinstance(other, dict):
+                other = {'config': {'skip_events': []}, 'per_event_windows': {}, 'results': {}}
+            cfg = other.setdefault('config', {})
+            se = cfg.get('skip_events', [])
+            if hasattr(se, 'tolist'):
+                se = se.tolist()
+            elif not hasattr(se, '__iter__'):
+                se = [int(se)] if se is not None else []
+            se = [int(x) for x in se]
+            if action == 'add' and event_idx not in se:
+                se.append(event_idx)
+            elif action == 'remove' and event_idx in se:
+                se.remove(event_idx)
+            cfg['skip_events'] = se
+
+            # Also update drop results arrays so Summary filters them correctly
+            results = other.setdefault('results', {})
+            n_events = len(self.events)
+
+            def _ensure_arr(key, default_val=np.nan):
+                if key not in results or not isinstance(results[key], np.ndarray):
+                    results[key] = np.full(n_events, default_val)
+                return results[key]
+
+            if action == 'add':
+                for key in ('delta_tau', 'delta_lvdt', 'D_Push', 'D_max', 'D_E3'):
+                    _ensure_arr(key)[event_idx] = np.nan
+                eddy_keys = sorted([k for k in self.time_history.keys() if 'eddy' in k.lower()])
+                for i in range(len(eddy_keys)):
+                    _ensure_arr(f'delta_E{i+1}')[event_idx] = np.nan
+                skipped = results.get('skipped')
+                if skipped is None or not isinstance(skipped, np.ndarray):
+                    results['skipped'] = np.zeros(n_events, dtype=bool)
+                results['skipped'][event_idx] = True
+            else:  # remove
+                skipped = results.get('skipped')
+                if skipped is not None and isinstance(skipped, np.ndarray) and event_idx < len(skipped):
+                    results['skipped'][event_idx] = False
+
+            self.data_manager.fast_save_analysis(self.run_idx, other)
+        except Exception as e:
+            print(f"Warning: failed to sync skip_events to analysis: {e}")
+
 
     def _apply_and_save(self):
         if not hasattr(self, '_result'):
@@ -670,6 +756,8 @@ class EventKEditorView(tk.Toplevel):
                     se = k_analysis['config'].get('skip_events', [])
                     if hasattr(se, 'tolist'):
                         se = se.tolist()
+                    elif not hasattr(se, '__iter__'):
+                        se = [se] if se is not None else []
                     k_analysis['config']['skip_events'] = [int(x) for x in se] if se is not None else []
                 
                 se = k_analysis['config']['skip_events']
@@ -738,6 +826,10 @@ class EventKEditorView(tk.Toplevel):
                 except Exception as e:
                     print(f"Warning: failed to overwrite K diagnostic plot: {e}")
 
+        # Sync the restored state to analysis so both editors agree
+        self._sync_skip_to_other(self.event_idx, action='remove')
+        self._preview_active = False
+
         msg = f"Event {self.event_idx} k value updated and saved."
         messagebox.showinfo("Applied & Saved", msg)
 
@@ -775,6 +867,8 @@ class EventKEditorView(tk.Toplevel):
             se = k_analysis['config'].get('skip_events', [])
             if hasattr(se, 'tolist'):
                 se = se.tolist()
+            elif not hasattr(se, '__iter__'):
+                se = [se] if se is not None else []
             k_analysis['config']['skip_events'] = [int(x) for x in se] if se is not None else []
 
         if self.event_idx not in k_analysis['config']['skip_events']:
@@ -825,7 +919,11 @@ class EventKEditorView(tk.Toplevel):
                 except Exception as e:
                     print(f"Warning: failed to delete diagnostic plot: {e}")
 
-        # Update UI: reload configuration and recompute/redraw
+        # Sync the deleted state to analysis so both editors agree
+        self._sync_skip_to_other(self.event_idx, action='add')
+
+        # Update UI: reload configuration (preview OFF so red overlay shows) and redraw
+        self._preview_active = False
         self._load_config()
         self._recompute()
         messagebox.showinfo("Event Deleted", f"Event {self.event_idx} has been excluded and deleted from HDF5 and plot folder.")
