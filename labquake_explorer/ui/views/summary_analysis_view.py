@@ -204,30 +204,34 @@ class SummaryAnalysisView(tk.Toplevel):
             self.canvas = None
             return
 
-        # Height ratios: slip gets extra space
-        ratios = []
-        for key in active:
-            ratios.append(1.5 if key == 'slip' else 1.0)
-
         # Limit window size to screen height
         screen_h = self.winfo_screenheight()
         self.maxsize(self.winfo_screenwidth(), screen_h - 80)
 
         self.figure = Figure(figsize=(12, max(4, 2 * n)), dpi=100)
-        self.axs_map = {}
-        axes_list = self.figure.subplots(n, 1, sharex=True, squeeze=False)
-        for i, key in enumerate(active):
-            self.axs_map[key] = axes_list[i, 0]
 
-        # 設定固定的子圖邊界，取代會導致變扁的 tight_layout
-        self.figure.subplots_adjust(left=0.08, right=0.94, top=0.95, bottom=0.06, hspace=0.25)
-        # Ensure all subplots have exactly the same width by allocating a colorbar axis for each
-        from mpl_toolkits.axes_grid1 import make_axes_locatable
+        # Use a 2-column GridSpec: col 0 = main plots, col 1 = colorbar (static width).
+        # This prevents colorbar from stealing layout space on every redraw.
+        import matplotlib.gridspec as gridspec
+        height_ratios = [1.5 if key == 'slip' else 1.0 for key in active]
+        gs = gridspec.GridSpec(
+            n, 2,
+            figure=self.figure,
+            width_ratios=[20, 1],
+            height_ratios=height_ratios,
+            left=0.08, right=0.97, top=0.95, bottom=0.06,
+            hspace=0.25, wspace=0.05,
+        )
+
+        self.axs_map = {}
         self.caxs_map = {}
-        for key, ax in self.axs_map.items():
-            divider = make_axes_locatable(ax)
-            cax = divider.append_axes("right", size="2%", pad=0.1)
-            cax.axis('off')
+        for i, key in enumerate(active):
+            ax = self.figure.add_subplot(gs[i, 0])
+            cax = self.figure.add_subplot(gs[i, 1])
+            cax.axis('off')  # hidden by default; heatmap will turn it on
+            if i > 0:
+                ax.sharex(list(self.axs_map.values())[0])
+            self.axs_map[key] = ax
             self.caxs_map[key] = cax
 
         self.canvas = FigureCanvasTkAgg(self.figure, master=self)
@@ -459,7 +463,7 @@ class SummaryAnalysisView(tk.Toplevel):
             if not has_data:
                 ax.text(0.5, 0.5, 'Run "Run K Analysis" first',
                         ha='center', va='center', transform=ax.transAxes, color='gray')
-            ax.set_ylabel(r'k [MPa/\u03bcm]')
+            ax.set_ylabel('k [MPa/μm]')
             self._add_trigger_lines(ax, t_start, t_end, t_offset, add_text=(active[0]=='stiffness'))
 
         # --- (8) Eddy - LVDT ---
@@ -615,11 +619,16 @@ class SummaryAnalysisView(tk.Toplevel):
 
         # X label on bottom
         if active:
-            last_key = active[-1]
-            self.axs_map[last_key].set_xlabel('Time [s]')
-            self.axs_map[last_key].set_xlim([t_plot[0], t_plot[-1]])
+            for i, key in enumerate(active):
+                if i < len(active) - 1:
+                    self.axs_map[key].tick_params(labelbottom=False)
+                else:
+                    self.axs_map[key].tick_params(labelbottom=True)
+                    self.axs_map[key].set_xlabel('Time [s]')
+            self.axs_map[active[-1]].set_xlim([t_plot[0], t_plot[-1]])
 
-        self.figure.tight_layout(rect=[0, 0, 0.94, 1])
+        # Do NOT call tight_layout here – it shrinks subplots cumulatively
+        # on every refresh. Layout is fixed statically in rebuild_figure via GridSpec.
         self.canvas.draw()
 
     def _save_summary_config(self):

@@ -152,15 +152,9 @@ class EventDropEditorView(tk.Toplevel):
                 cfg = analysis.get('config', {})
                 if isinstance(cfg, dict):
                     for k in ['pre_win', 'post_win', 'tau_smooth_w', 'lvdt_smooth_w',
-                              'push_speed', 'delay_sec', 'window_sec', 'skip_events']:
+                              'push_speed', 'delay_sec', 'window_sec']:
                         if k in cfg:
-                            if k == 'skip_events':
-                                se = cfg[k]
-                                if hasattr(se, 'tolist'):
-                                    se = se.tolist()
-                                self.config[k] = [int(x) for x in se] if se is not None else []
-                            else:
-                                self.config[k] = cfg[k]
+                            self.config[k] = cfg[k]
 
                 raw_pew = analysis.get('per_event_windows', {})
                 if isinstance(raw_pew, list):
@@ -176,6 +170,10 @@ class EventDropEditorView(tk.Toplevel):
                                 pass
         except Exception:
             pass
+
+        # Always read skip_events from the shared run-level list.
+        self.config['skip_events'] = self.data_manager.get_run_skip_events(self.run_idx)
+
 
         self.config['per_event_windows'] = pew_resolved
 
@@ -533,56 +531,7 @@ class EventDropEditorView(tk.Toplevel):
     # Save
     # ------------------------------------------------------------------
 
-    def _sync_skip_to_other(self, event_idx, action='add'):
-        """Sync skip state to k_analysis so both editors stay in step.
 
-        action: 'add' marks the event as skipped (sets k=NaN, skipped=True);
-                'remove' restores it (clears skipped flag; k stays NaN until
-                K Editor re-runs Apply & Save for that event).
-        """
-        try:
-            other = self.data_manager.get_data(f"runs/[{self.run_idx}]/k_analysis")
-            if other is None or not isinstance(other, dict):
-                other = {'config': {'skip_events': []}, 'per_event_config': {}, 'results': {}}
-            cfg = other.setdefault('config', {})
-            se = cfg.get('skip_events', [])
-            if hasattr(se, 'tolist'):
-                se = se.tolist()
-            elif not hasattr(se, '__iter__'):
-                se = [int(se)] if se is not None else []
-            se = [int(x) for x in se]
-            if action == 'add' and event_idx not in se:
-                se.append(event_idx)
-            elif action == 'remove' and event_idx in se:
-                se.remove(event_idx)
-            cfg['skip_events'] = se
-
-            # Also update results arrays so Summary can filter with ~isnan
-            results = other.setdefault('results', {})
-            n_events = len(self.events)
-
-            def _ensure_arr(key, default_val=np.nan):
-                if key not in results or not isinstance(results[key], np.ndarray):
-                    results[key] = np.full(n_events, default_val)
-                return results[key]
-
-            if action == 'add':
-                _ensure_arr('k')[event_idx] = np.nan
-                skipped = results.get('skipped')
-                if skipped is None or not isinstance(skipped, np.ndarray):
-                    results['skipped'] = np.zeros(n_events, dtype=bool)
-                results['skipped'][event_idx] = True
-            else:  # remove
-                skipped = results.get('skipped')
-                if skipped is not None and isinstance(skipped, np.ndarray) and event_idx < len(skipped):
-                    results['skipped'][event_idx] = False
-
-            try:
-                self.data_manager.fast_save_analysis(self.run_idx, other, group_name='k_analysis')
-            except TypeError:
-                self.data_manager.fast_save_analysis(self.run_idx, other)
-        except Exception as e:
-            print(f"Warning: failed to sync skip_events to k_analysis: {e}")
 
     def _apply_and_save(self):
         if not hasattr(self, '_result'):
@@ -606,21 +555,16 @@ class EventDropEditorView(tk.Toplevel):
                 'per_event_windows': {},
                 'results': {},
             }
-            se = analysis['config'].setdefault('skip_events', [])
-            if self.event_idx in se:
-                se.remove(self.event_idx)
         else:
             if 'config' not in analysis or not isinstance(analysis['config'], dict):
                 analysis['config'] = dict(self.config)
-            else:
-                se = self.config.get('skip_events', [])
-                analysis['config']['skip_events'] = list(se)
-            
-            se = analysis['config']['skip_events']
-            if self.event_idx in se:
-                se.remove(self.event_idx)
-            
-            self.config['skip_events'] = list(se)
+
+        # Remove this event from the shared skip list (reactivate it)
+        se = self.data_manager.get_run_skip_events(self.run_idx)
+        if self.event_idx in se:
+            se.remove(self.event_idx)
+        self.data_manager.save_run_skip_events(self.run_idx, se)
+        self.config['skip_events'] = se
 
         if 'per_event_windows' not in analysis or not isinstance(analysis['per_event_windows'], dict):
             analysis['per_event_windows'] = {}
@@ -681,8 +625,7 @@ class EventDropEditorView(tk.Toplevel):
                 except Exception as e:
                     print(f"Warning: failed to overwrite Event Drop diagnostic plot: {e}")
 
-        # Sync the restored state to k_analysis so both editors agree
-        self._sync_skip_to_other(self.event_idx, action='remove')
+        # Sync the restored state to shared list so both editors agree
         self._preview_active = False
 
         msg = f"Event {self.event_idx} updated and saved to HDF5."
@@ -710,16 +653,13 @@ class EventDropEditorView(tk.Toplevel):
 
         if 'config' not in analysis or not isinstance(analysis['config'], dict):
             analysis['config'] = {}
-        if 'skip_events' not in analysis['config'] or not isinstance(analysis['config']['skip_events'], list):
-            se = analysis['config'].get('skip_events', [])
-            if hasattr(se, 'tolist'):
-                se = se.tolist()
-            elif not hasattr(se, '__iter__'):
-                se = [se] if se is not None else []
-            analysis['config']['skip_events'] = [int(x) for x in se] if se is not None else []
 
-        if self.event_idx not in analysis['config']['skip_events']:
-            analysis['config']['skip_events'].append(self.event_idx)
+        # Add this event to the shared skip list
+        se = self.data_manager.get_run_skip_events(self.run_idx)
+        if self.event_idx not in se:
+            se.append(self.event_idx)
+        self.data_manager.save_run_skip_events(self.run_idx, se)
+        self.config['skip_events'] = se
 
         # Set results to NaN / skipped
         results = analysis.setdefault('results', {})
@@ -769,14 +709,11 @@ class EventDropEditorView(tk.Toplevel):
                 except Exception as e:
                     print(f"Warning: failed to delete diagnostic plot: {e}")
 
-        # Sync the deleted state to k_analysis so both editors agree
-        self._sync_skip_to_other(self.event_idx, action='add')
-
         # Update UI: reload configuration (preview OFF so red overlay shows) and redraw
         self._preview_active = False
         self._load_config()
         self._recompute()
-        messagebox.showinfo("Event Deleted", f"Event {self.event_idx} has been excluded and deleted from HDF5 and plot folder.")
+
 
     def on_close(self):
         if self.figure:

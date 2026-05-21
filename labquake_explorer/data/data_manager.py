@@ -307,6 +307,78 @@ class DataManager:
             print(f"Warning: Fast save failed: {e}")
             # Non-critical, as in-memory data is still updated
 
+    # ------------------------------------------------------------------
+    # Shared skip-events list  (runs/{run_idx}/skip_events)
+    # ------------------------------------------------------------------
+
+    def get_run_skip_events(self, run_idx: int) -> list:
+        """Return the shared skip-events list for a run (list of int).
+
+        Reads from the run-level 'skip_events' key first.  If that key has
+        never been set, falls back to merging legacy per-analysis lists from
+        analysis/config/skip_events and k_analysis/config/skip_events so that
+        existing HDF5 files work seamlessly without a manual migration step.
+        """
+        try:
+            run = self.data['runs'][run_idx]
+            se = run.get('skip_events', None)
+            if se is not None:
+                if hasattr(se, 'tolist'):
+                    se = se.tolist()
+                return [int(x) for x in se]
+
+            # --- Legacy fallback: merge from per-analysis configs ---
+            merged = set()
+            for group_key in ('analysis', 'k_analysis'):
+                grp = run.get(group_key)
+                if isinstance(grp, dict):
+                    cfg = grp.get('config')
+                    if isinstance(cfg, dict):
+                        legacy = cfg.get('skip_events', [])
+                        if legacy is not None:
+                            if hasattr(legacy, 'tolist'):
+                                legacy = legacy.tolist()
+                            merged.update(int(x) for x in legacy)
+            result = sorted(merged)
+            if result:
+                # Persist the merged list so next read hits the fast path
+                run['skip_events'] = result
+            return result
+        except (IndexError, KeyError, TypeError):
+            return []
+
+
+    def save_run_skip_events(self, run_idx: int, skip_list: list) -> None:
+        """Persist the shared skip-events list for a run.
+
+        Updates both the in-memory dict and the HDF5 dataset at
+        runs/{run_idx}/skip_events so the list survives an app restart.
+        """
+        clean = sorted({int(x) for x in skip_list})
+
+        # 1. Update in-memory
+        try:
+            self.data['runs'][run_idx]['skip_events'] = clean
+        except (IndexError, KeyError, TypeError):
+            return
+
+        # 2. Update HDF5
+        if not self.data_path or not self.data_path.exists():
+            return
+        if self.data_path.suffix.lower() not in ['.h5', '.hdf5']:
+            return
+
+        try:
+            with h5py.File(self.data_path, 'r+') as f:
+                dataset_path = f"runs/{run_idx}/skip_events"
+                if dataset_path in f:
+                    del f[dataset_path]
+                arr = np.array(clean, dtype=np.int64)
+                f.create_dataset(dataset_path, data=arr)
+            print(f"Saved shared skip_events for run {run_idx}: {clean}")
+        except Exception as e:
+            print(f"Warning: could not persist skip_events to HDF5: {e}")
+
 
     def extract_events(self, indices: List[int], window_size: float) -> List[Dict]:
         """Extract events using provided indices"""
