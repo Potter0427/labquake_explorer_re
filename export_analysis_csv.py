@@ -19,8 +19,8 @@ def export_h5_to_csv(h5_path: str):
         runs_group = f['runs']
         run_keys = sorted(runs_group.keys(), key=lambda x: int(x))
 
-        # 定義匯出欄位順序
-        ordered_keys = ['trigger_time', 'delta_tau',
+        # 定義匯出欄位順序（加入 k）
+        ordered_keys = ['trigger_time', 'k', 'delta_tau',
                         'delta_E1', 'delta_E2', 'delta_E3', 'delta_E4', 'delta_E5',
                         'delta_lvdt', 'D_Push', 'D_max', 'D_E3']
 
@@ -30,23 +30,46 @@ def export_h5_to_csv(h5_path: str):
             run = runs_group[run_key]
             run_name = run['name'][()].decode() if 'name' in run else f"run{run_key}"
 
-            if 'analysis' not in run or 'results' not in run['analysis']:
-                print(f"  [{run_name}] 沒有 analysis/results，跳過", flush=True)
+            drop_results = run['analysis']['results'] if ('analysis' in run and 'results' in run['analysis']) else {}
+            k_results = run['k_analysis']['results'] if ('k_analysis' in run and 'results' in run['k_analysis']) else {}
+
+            if not drop_results and not k_results:
+                print(f"  [{run_name}] 沒有 drop 或 k 的分析結果，跳過", flush=True)
                 continue
 
-            results = run['analysis']['results']
-            available_keys = list(results.keys())
-            export_keys = [k for k in ordered_keys if k in available_keys]
+            results = {}
+            for d in (drop_results, k_results):
+                for k in d.keys():
+                    results[k] = d[k]
 
-            # 讀取資料
+            # 固定匯出所有的欄位，避免各個 run 欄位不同導致 CSV 錯位 (ParserError)
+            export_keys = ordered_keys
+
+            # 讀取資料與總筆數
             data = {}
             n_events = 0
             for k in export_keys:
-                arr = results[k][()]
-                data[k] = arr
-                n_events = max(n_events, len(arr))
+                if k in results:
+                    arr = results[k][()]
+                    data[k] = arr
+                    n_events = max(n_events, len(arr))
+                else:
+                    data[k] = []
 
-            skipped = results['skipped'][()].astype(bool) if 'skipped' in results else np.zeros(n_events, dtype=bool)
+            # 讀取共用 skip_events (或從舊的 results['skipped'] fallback)
+            skipped = np.zeros(n_events, dtype=bool)
+            if 'skip_events' in run:
+                se_obj = run['skip_events']
+                if isinstance(se_obj, h5py.Group):
+                    # 舊版 HDF5 結構中 skip_events 可能被存成 Group (包含 '0', '1', '2' ... 等 dataset)
+                    se = [int(se_obj[k][()]) for k in sorted(se_obj.keys(), key=lambda x: int(x))]
+                else:
+                    se = se_obj[()]
+                for idx in se:
+                    if idx < n_events:
+                        skipped[idx] = True
+            elif 'skipped' in results:
+                skipped = results['skipped'][()].astype(bool)
 
             for i in range(n_events):
                 row = [run_name, i + 1]

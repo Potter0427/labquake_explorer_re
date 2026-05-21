@@ -478,10 +478,18 @@ class LabquakeExplorer:
         # Load shared skip_events from run-level shared list
         cfg['skip_events'] = self.data_manager.get_run_skip_events(run_idx)
 
+        default_start = 0
+        default_end = len(events) - 1
         # Try to load existing config from this run to persist settings
         try:
             existing_analysis = self.data_manager.get_data(f"runs/[{run_idx}]/analysis")
             if isinstance(existing_analysis, dict) and 'config' in existing_analysis:
+                summary_cfg = existing_analysis['config'].get('summary_config', {})
+                if 'start_idx' in summary_cfg:
+                    default_start = int(summary_cfg['start_idx'])
+                if 'end_idx' in summary_cfg:
+                    default_end = int(summary_cfg['end_idx'])
+
                 old_cfg = existing_analysis['config']
                 if isinstance(old_cfg, dict):
                     # Restore pre_win / post_win (may be ndarray from HDF5)
@@ -506,6 +514,8 @@ class LabquakeExplorer:
         row = 0
         entries = {}
         for label, key, default in [
+            ("Start Event", 'start_event', default_start),
+            ("End Event", 'end_event', default_end),
             ("Pre window start", 'pre_start', cfg['pre_win'][0]),
             ("Pre window end", 'pre_end', cfg['pre_win'][1]),
             ("Post window start", 'post_start', cfg['post_win'][0]),
@@ -566,8 +576,18 @@ class LabquakeExplorer:
                 'tau_smooth_w': cfg['tau_smooth_w'],
                 'lvdt_smooth_w': cfg['lvdt_smooth_w']
             })
-            # Persist skip_events to the shared run-level list
-            self.data_manager.save_run_skip_events(run_idx, cfg['skip_events'])
+            # Persist skip_events to the shared run-level list (only user-entered ones)
+            self.data_manager.save_run_skip_events(run_idx, list(cfg['skip_events']))
+
+            try:
+                start_ev = int(entries['start_event'].get())
+                end_ev = int(entries['end_event'].get())
+                for i in range(len(events)):
+                    if i < start_ev or i > end_ev:
+                        if i not in cfg['skip_events']:
+                            cfg['skip_events'].append(i)
+            except ValueError:
+                pass
 
             config_win.destroy()
 
@@ -695,6 +715,19 @@ class LabquakeExplorer:
         # Load shared skip_events from run-level shared list
         cfg['skip_events'] = self.data_manager.get_run_skip_events(run_idx)
 
+        default_start = 0
+        default_end = len(events) - 1
+        try:
+            existing_analysis = self.data_manager.get_data(f"runs/[{run_idx}]/analysis")
+            if isinstance(existing_analysis, dict) and 'config' in existing_analysis:
+                summary_cfg = existing_analysis['config'].get('summary_config', {})
+                if 'start_idx' in summary_cfg:
+                    default_start = int(summary_cfg['start_idx'])
+                if 'end_idx' in summary_cfg:
+                    default_end = int(summary_cfg['end_idx'])
+        except Exception:
+            pass
+
         # Load existing k_analysis config
         try:
             existing = self.data_manager.get_data(f"runs/[{run_idx}]/k_analysis")
@@ -714,6 +747,8 @@ class LabquakeExplorer:
         row = 0
         entries = {}
         for label, key, default in [
+            ("Start Event", 'start_event', default_start),
+            ("End Event", 'end_event', default_end),
             ("Pre start (s)", 'k_pre_start', cfg['k_pre_start']),
             ("Pre end (s)", 'k_pre_end', cfg['k_pre_end']),
             ("Smooth window", 'k_smooth_w', cfg['k_smooth_w']),
@@ -783,8 +818,18 @@ class LabquakeExplorer:
                 'k_lowpass_freq': cfg.get('k_lowpass_freq', 0.0),
                 'k_use_ransac': cfg['k_use_ransac']
             })
-            # Persist skip_events to the shared run-level list
-            self.data_manager.save_run_skip_events(run_idx, cfg['skip_events'])
+            # Persist skip_events to the shared run-level list (only user-entered ones)
+            self.data_manager.save_run_skip_events(run_idx, list(cfg['skip_events']))
+
+            try:
+                start_ev = int(entries['start_event'].get())
+                end_ev = int(entries['end_event'].get())
+                for i in range(len(events)):
+                    if i < start_ev or i > end_ev:
+                        if i not in cfg['skip_events']:
+                            cfg['skip_events'].append(i)
+            except ValueError:
+                pass
             
             config_win.destroy()
 
