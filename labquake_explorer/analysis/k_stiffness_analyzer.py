@@ -161,7 +161,15 @@ def analyze_single_k(
         'event_idx': event_idx,
         'skipped': event_idx in skip_list,
         'trigger_time': np.nan,
-        'k': np.nan,
+        'k': {
+            'value': np.nan,
+            'start': k_pre_start,
+            'end': k_pre_end,
+            'smooth_w': w,
+            'highpass_freq': hp_freq,
+            'lowpass_freq': lp_freq,
+            'use_ransac': use_ransac,
+        },
     }
 
     t_trig = _get_t_trig(events[event_idx])
@@ -209,7 +217,7 @@ def analyze_single_k(
                 coeffs = robust_fit_ransac(lvdt_pre, tau_pre)
             else:
                 coeffs = np.polyfit(lvdt_pre, tau_pre, 1)
-            row['k'] = coeffs[0]  # slope = stiffness
+            row['k']['value'] = coeffs[0]  # slope = stiffness
             row['k_coeffs'] = coeffs.tolist()
         except Exception:
             pass
@@ -225,26 +233,13 @@ def analyze_all_k(
     time_history: Dict[str, np.ndarray],
     events: List[Dict],
     config: dict,
-) -> List[Dict[str, Any]]:
-    """Run K analysis on all events. Returns list of result dicts."""
-    results = []
-    for i in range(len(events)):
+) -> Dict[int, Dict[str, Any]]:
+    """Run K analysis on all events. Returns dict of result dicts."""
+    results = {}
+    for i in range(1, len(events)):
         row = analyze_single_k(time_history, events, i, config)
-        results.append(row)
+        results[i] = row
     return results
-
-
-def k_results_to_arrays(results: List[Dict]) -> Dict[str, np.ndarray]:
-    """Convert list-of-dicts to dict-of-arrays for HDF5 storage."""
-    if not results:
-        return {}
-
-    out = {}
-    keys = ['trigger_time', 'k']
-    for k in keys:
-        out[k] = np.array([r.get(k, np.nan) for r in results], dtype=float)
-    out['skipped'] = np.array([r.get('skipped', False) for r in results], dtype=bool)
-    return out
 
 
 # ------------------------------------------------------------------
@@ -346,7 +341,8 @@ def generate_k_diagnostic_plot(
         cbar = fig.colorbar(sc, cax=ax_cbar)
         cbar.set_label('time relative [s]')
 
-        k_val = result.get('k', np.nan)
+        k_dict = result.get('k', {})
+        k_val = k_dict.get('value', np.nan) if isinstance(k_dict, dict) else np.nan
         if not np.isnan(k_val):
             k_coeffs = result.get('k_coeffs', None)
             if k_coeffs is not None:

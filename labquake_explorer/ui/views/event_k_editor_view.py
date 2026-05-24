@@ -97,8 +97,18 @@ class EventKEditorView(tk.Toplevel):
         ttk.Button(ctrl, text="< Prev", command=self._go_prev).grid(row=0, column=1, padx=2)
         self.event_combo = ttk.Combobox(ctrl, state="readonly", width=8)
         self.event_combo.grid(row=0, column=2, padx=2)
-        self.event_combo['values'] = [str(i) for i in range(len(self.events))]
-        self.event_combo.current(self.event_idx)
+        valid_indices = [i for i in range(1, len(self.events))]
+        self.event_combo['values'] = [str(i) for i in valid_indices]
+        
+        # Determine the index to set in the combobox
+        idx_to_set = self.event_idx if self.event_idx in valid_indices else (valid_indices[0] if valid_indices else None)
+        if idx_to_set is not None:
+            try:
+                cb_index = valid_indices.index(idx_to_set)
+                self.event_combo.current(cb_index)
+            except ValueError:
+                pass
+                
         self.event_combo.bind("<<ComboboxSelected>>", self._on_event_change)
         ttk.Button(ctrl, text="Next >", command=self._go_next).grid(row=0, column=3, padx=2)
 
@@ -177,16 +187,22 @@ class EventKEditorView(tk.Toplevel):
         self._recompute()
 
     def _go_prev(self):
-        if self.event_idx <= 0:
+        valid_indices = [i for i in range(1, len(self.events))]
+        if self.event_idx not in valid_indices:
             return
-        self.event_combo.current(self.event_idx - 1)
-        self._on_event_change()
+        current_cb_index = valid_indices.index(self.event_idx)
+        if current_cb_index > 0:
+            self.event_combo.current(current_cb_index - 1)
+            self._on_event_change()
 
     def _go_next(self):
-        if self.event_idx >= len(self.events) - 1:
+        valid_indices = [i for i in range(1, len(self.events))]
+        if self.event_idx not in valid_indices:
             return
-        self.event_combo.current(self.event_idx + 1)
-        self._on_event_change()
+        current_cb_index = valid_indices.index(self.event_idx)
+        if current_cb_index < len(valid_indices) - 1:
+            self.event_combo.current(current_cb_index + 1)
+            self._on_event_change()
 
     def _on_focus_y_changed(self):
         self._draw_static(self._get_current_config())
@@ -203,40 +219,35 @@ class EventKEditorView(tk.Toplevel):
         # Always read skip_events from the shared run-level list.
         self.config['skip_events'] = self.data_manager.get_run_skip_events(self.run_idx)
 
+        # 1. Read global defaults from run's config
         try:
-            k_analysis = self.data_manager.get_data(
-                f"runs/[{self.run_idx}]/k_analysis"
-            )
-            if isinstance(k_analysis, dict):
-                cfg = k_analysis.get('config', {})
-                if isinstance(cfg, dict):
-                    for k in ['k_pre_start', 'k_pre_end', 'k_smooth_w',
-                              'k_highpass_freq', 'k_lowpass_freq', 'k_window_sec', 'k_use_ransac']:
-                        if k in cfg:
-                            if k == 'k_use_ransac':
-                                self.config[k] = bool(cfg[k])
-                            else:
-                                self.config[k] = (
-                                    float(cfg[k])
-                                    if 'freq' in k or 'start' in k or 'end' in k or 'sec' in k
-                                    else int(cfg[k])
-                                )
+            run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
+            if isinstance(run_data, dict) and 'config' in run_data:
+                cfg = run_data['config']
+                for k in ['k_smooth_w', 'k_highpass_freq', 'k_lowpass_freq', 'k_use_ransac']:
+                    if k in cfg:
+                        if k == 'k_use_ransac':
+                            self.config[k] = bool(cfg[k])
+                        else:
+                            self.config[k] = cfg[k]
+        except Exception:
+            pass
 
-                per_event = k_analysis.get('per_event_config', {})
-                if isinstance(per_event, dict):
-                    ev_key = str(self.event_idx)
-                    if ev_key in per_event and isinstance(per_event[ev_key], dict):
-                        ev_cfg = per_event[ev_key]
-                        for k in ['k_pre_start', 'k_pre_end', 'k_smooth_w',
-                                  'k_highpass_freq', 'k_lowpass_freq', 'k_use_ransac']:
-                            if k in ev_cfg:
-                                val = ev_cfg[k]
-                                if hasattr(val, 'item'):
-                                    val = val.item()
-                                if k == 'k_use_ransac':
-                                    self.config[k] = bool(val)
-                                else:
-                                    self.config[k] = val
+        # 2. Read event-specific overrides from events[idx]['k']
+        try:
+            if self.event_idx < len(self.events):
+                import numpy as np
+                ev = self.events[self.event_idx]
+                if isinstance(ev, dict) and 'k' in ev and isinstance(ev['k'], dict):
+                    event_k = ev['k']
+                    if 'start' in event_k and event_k['start'] is not None and not np.isnan(event_k['start']):
+                        val = event_k['start']
+                        if hasattr(val, 'item'): val = val.item()
+                        self.config['k_pre_start'] = val
+                    if 'end' in event_k and event_k['end'] is not None and not np.isnan(event_k['end']):
+                        val = event_k['end']
+                        if hasattr(val, 'item'): val = val.item()
+                        self.config['k_pre_end'] = val
         except Exception:
             pass
 
@@ -508,8 +519,10 @@ class EventKEditorView(tk.Toplevel):
                 except Exception:
                     pass
 
-                k_val = result.get('k', np.nan)
-                if not np.isnan(k_val):
+                k_obj = result.get('k', np.nan)
+                k_val = k_obj.get('value', np.nan) if isinstance(k_obj, dict) else k_obj
+                
+                if isinstance(k_val, (int, float, np.number)) and not np.isnan(k_val):
                     k_coeffs = result.get('k_coeffs', None)
                     if k_coeffs is not None:
                         fit_y = k_coeffs[0] * lvdt_pre + k_coeffs[1]
@@ -674,25 +687,6 @@ class EventKEditorView(tk.Toplevel):
 
         cfg = self._current_cfg
 
-        try:
-            k_analysis = self.data_manager.get_data(f"runs/[{self.run_idx}]/k_analysis")
-        except (KeyError, TypeError, ValueError):
-            k_analysis = None
-
-        if k_analysis is None or not isinstance(k_analysis, dict):
-            k_analysis = {
-                'config': {
-                    'k_pre_start': cfg['k_pre_start'],
-                    'k_pre_end': cfg['k_pre_end'],
-                    'k_smooth_w': cfg['k_smooth_w'],
-                    'k_highpass_freq': cfg['k_highpass_freq'],
-                    'k_lowpass_freq': cfg.get('k_lowpass_freq', 0.0),
-                    'k_use_ransac': cfg.get('k_use_ransac', False),
-                },
-                'per_event_config': {},
-                'results': {},
-            }
-
         # Remove this event from the shared skip list (reactivate it)
         se = self.data_manager.get_run_skip_events(self.run_idx)
         if self.event_idx in se:
@@ -700,42 +694,15 @@ class EventKEditorView(tk.Toplevel):
         self.data_manager.save_run_skip_events(self.run_idx, se)
         self.config['skip_events'] = se
 
-        if 'per_event_config' not in k_analysis or not isinstance(k_analysis['per_event_config'], dict):
-            k_analysis['per_event_config'] = {}
-        if 'results' not in k_analysis or not isinstance(k_analysis['results'], dict):
-            k_analysis['results'] = {}
-
-        k_analysis['per_event_config'][str(self.event_idx)] = {
-            'k_pre_start': cfg['k_pre_start'],
-            'k_pre_end': cfg['k_pre_end'],
-            'k_smooth_w': cfg['k_smooth_w'],
-            'k_highpass_freq': cfg['k_highpass_freq'],
-            'k_lowpass_freq': cfg.get('k_lowpass_freq', 0.0),
-            'k_use_ransac': cfg.get('k_use_ransac', False),
-        }
-
         r = self._result
-        results = k_analysis['results']
-        n_events = len(self.events)
+        
+        # 移除畫圖用的殘差資料
+        for key in list(r.keys()):
+            if key.endswith('_coeffs') or key == 'event_idx':
+                del r[key]
 
-        def _ensure_array(key, default_val=np.nan):
-            if key not in results or not isinstance(results[key], np.ndarray):
-                results[key] = np.full(n_events, default_val)
-            return results[key]
-
-        _ensure_array('trigger_time')[self.event_idx] = r.get('trigger_time', np.nan)
-        _ensure_array('k')[self.event_idx] = r.get('k', np.nan)
-        if 'skipped' not in results or not isinstance(results['skipped'], np.ndarray):
-            results['skipped'] = np.zeros(n_events, dtype=bool)
-        results['skipped'][self.event_idx] = False
-
-        run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
-        run_data['k_analysis'] = k_analysis
-
-        try:
-            self.data_manager.fast_save_analysis(self.run_idx, k_analysis, group_name='k_analysis')
-        except TypeError:
-            self.data_manager.fast_save_analysis(self.run_idx, k_analysis)
+        # category=None 直接寫入根目錄，只覆寫 r 中有的項目
+        self.data_manager.fast_save_event_analysis(self.run_idx, self.event_idx, None, r)
 
         # Overwrite K diagnostic plot if the directory exists
         import os
@@ -765,6 +732,9 @@ class EventKEditorView(tk.Toplevel):
         # Sync the restored state to shared list so both editors agree
         self._preview_active = False
 
+        if hasattr(self.parent, 'refresh_tree'):
+            self.parent.refresh_tree()
+
         msg = f"Event {self.event_idx} k value updated and saved."
         messagebox.showinfo("Applied & Saved", msg)
 
@@ -776,51 +746,23 @@ class EventKEditorView(tk.Toplevel):
         if not confirm:
             return
 
-        try:
-            k_analysis = self.data_manager.get_data(f"runs/[{self.run_idx}]/k_analysis")
-        except (KeyError, TypeError, ValueError):
-            k_analysis = None
-
-        if k_analysis is None or not isinstance(k_analysis, dict):
-            k_analysis = {
-                'config': {},
-                'per_event_config': {},
-                'results': {},
-            }
-
-        if 'config' not in k_analysis or not isinstance(k_analysis['config'], dict):
-            k_analysis['config'] = {}
-
         # Add this event to the shared skip list
         se = self.data_manager.get_run_skip_events(self.run_idx)
         if self.event_idx not in se:
             se.append(self.event_idx)
         self.data_manager.save_run_skip_events(self.run_idx, se)
-        self.config['skip_events'] = se
-
-        # Set results to NaN / skipped
-        results = k_analysis.setdefault('results', {})
-        n_events = len(self.events)
-
-        def _ensure_array(key, default_val=np.nan):
-            if key not in results or not isinstance(results[key], np.ndarray):
-                results[key] = np.full(n_events, default_val)
-            return results[key]
-
-        _ensure_array('trigger_time')[self.event_idx] = np.nan
-        _ensure_array('k')[self.event_idx] = np.nan
+        # Set results to NaN / skipped in AoS
+        event_k_data = {
+            'skipped': True,
+            'trigger_time': np.nan,
+            'k': {
+                'value': np.nan,
+                'start': np.nan,
+                'end': np.nan,
+            },
+        }
         
-        if 'skipped' not in results or not isinstance(results['skipped'], np.ndarray):
-            results['skipped'] = np.zeros(n_events, dtype=bool)
-        results['skipped'][self.event_idx] = True
-
-        run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
-        run_data['k_analysis'] = k_analysis
-
-        try:
-            self.data_manager.fast_save_analysis(self.run_idx, k_analysis, group_name='k_analysis')
-        except TypeError:
-            self.data_manager.fast_save_analysis(self.run_idx, k_analysis)
+        self.data_manager.fast_save_event_analysis(self.run_idx, self.event_idx, None, event_k_data)
 
         # Delete diagnostic plot if it exists
         import os
@@ -829,6 +771,7 @@ class EventKEditorView(tk.Toplevel):
             h5_dir = str(h5_path.parent)
             h5_stem = h5_path.stem
             try:
+                run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
                 run_name_raw = run_data.get('name', f'run{self.run_idx+1}')
                 run_part = run_name_raw.split('_')[0] if '_' in run_name_raw else run_name_raw
                 output_dir = os.path.join(h5_dir, f"{h5_stem}_{run_part}_k")
@@ -847,6 +790,9 @@ class EventKEditorView(tk.Toplevel):
         self._preview_active = False
         self._load_config()
         self._recompute()
+        
+        if hasattr(self.parent, 'refresh_tree'):
+            self.parent.refresh_tree()
 
 
     def on_close(self):

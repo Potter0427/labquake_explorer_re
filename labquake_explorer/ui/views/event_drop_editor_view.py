@@ -30,6 +30,7 @@ import numpy as np
 from labquake_explorer.analysis.event_drop_analyzer import (
     analyze_single_event,
     moving_average,
+    _get_t_trig,
     DEFAULT_CONFIG,
 )
 
@@ -41,8 +42,12 @@ class EventDropEditorView(tk.Toplevel):
         self.title(f"Event Drop Editor - Run {run_idx + 1}")
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
+        if event_idx <= 0:
+            self.event_idx = 1
+        else:
+            self.event_idx = event_idx
+
         self.run_idx = run_idx
-        self.event_idx = event_idx
         self.data_manager = self.parent.data_manager
 
         # Load data
@@ -58,8 +63,8 @@ class EventDropEditorView(tk.Toplevel):
             self.destroy()
             return
 
-        if event_idx >= len(self.events):
-            messagebox.showerror("Error", f"Event {event_idx} out of range")
+        if self.event_idx >= len(self.events):
+            messagebox.showerror("Error", f"Event {self.event_idx} out of range")
             self.destroy()
             return
 
@@ -87,8 +92,18 @@ class EventDropEditorView(tk.Toplevel):
         ttk.Button(ctrl, text="< Prev", command=self._go_prev).grid(row=0, column=1, padx=2)
         self.event_combo = ttk.Combobox(ctrl, state="readonly", width=8)
         self.event_combo.grid(row=0, column=2, padx=2)
-        self.event_combo['values'] = [str(i) for i in range(len(self.events))]
-        self.event_combo.current(self.event_idx)
+        valid_indices = [i for i in range(1, len(self.events))]
+        self.event_combo['values'] = [str(i) for i in valid_indices]
+        
+        # Determine the index to set in the combobox
+        idx_to_set = self.event_idx if self.event_idx in valid_indices else (valid_indices[0] if valid_indices else None)
+        if idx_to_set is not None:
+            try:
+                cb_index = valid_indices.index(idx_to_set)
+                self.event_combo.current(cb_index)
+            except ValueError:
+                pass
+                
         self.event_combo.bind("<<ComboboxSelected>>", self._on_event_change)
         ttk.Button(ctrl, text="Next >", command=self._go_next).grid(row=0, column=3, padx=2)
 
@@ -126,16 +141,22 @@ class EventDropEditorView(tk.Toplevel):
         self._recompute()
 
     def _go_prev(self):
-        if self.event_idx <= 0:
+        valid_indices = [i for i in range(1, len(self.events))]
+        if self.event_idx not in valid_indices:
             return
-        self.event_combo.current(self.event_idx - 1)
-        self._on_event_change()
+        current_cb_index = valid_indices.index(self.event_idx)
+        if current_cb_index > 0:
+            self.event_combo.current(current_cb_index - 1)
+            self._on_event_change()
 
     def _go_next(self):
-        if self.event_idx >= len(self.events) - 1:
+        valid_indices = [i for i in range(1, len(self.events))]
+        if self.event_idx not in valid_indices:
             return
-        self.event_combo.current(self.event_idx + 1)
-        self._on_event_change()
+        current_cb_index = valid_indices.index(self.event_idx)
+        if current_cb_index < len(valid_indices) - 1:
+            self.event_combo.current(current_cb_index + 1)
+            self._on_event_change()
 
     # ------------------------------------------------------------------
     # Config loading
@@ -145,35 +166,38 @@ class EventDropEditorView(tk.Toplevel):
         self.config = dict(DEFAULT_CONFIG)
         pew_resolved = {}
         try:
-            analysis = self.data_manager.get_data(
-                f"runs/[{self.run_idx}]/analysis"
-            )
-            if isinstance(analysis, dict):
-                cfg = analysis.get('config', {})
-                if isinstance(cfg, dict):
-                    for k in ['pre_win', 'post_win', 'tau_smooth_w', 'lvdt_smooth_w',
-                              'push_speed', 'delay_sec', 'window_sec']:
-                        if k in cfg:
-                            self.config[k] = cfg[k]
-
-                raw_pew = analysis.get('per_event_windows', {})
-                if isinstance(raw_pew, list):
-                    for i, v in enumerate(raw_pew):
-                        if isinstance(v, dict):
-                            pew_resolved[i] = v
-                elif isinstance(raw_pew, dict):
-                    for k, v in raw_pew.items():
-                        if isinstance(v, dict):
-                            try:
-                                pew_resolved[int(k)] = v
-                            except (ValueError, TypeError):
-                                pass
+            run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
+            if isinstance(run_data, dict) and 'config' in run_data:
+                cfg = run_data['config']
+                for k in ['pre_win', 'post_win', 'tau_smooth_w', 'lvdt_smooth_w',
+                          'push_speed', 'delay_sec', 'window_sec']:
+                    if k in cfg:
+                        self.config[k] = cfg[k]
         except Exception:
             pass
 
+        # Load event-specific windows from self.events
+        if self.event_idx < len(self.events):
+            ev = self.events[self.event_idx]
+            pew = {}
+            if isinstance(ev, dict):
+                import numpy as np
+                def _valid_pts(d):
+                    if 'pre_start' not in d: return False
+                    pts = [d['pre_start'], d['pre_end'], d['post_start'], d['post_end']]
+                    return all(x is not None and not np.isnan(x) for x in pts)
+
+                if 'tau' in ev and _valid_pts(ev['tau']):
+                    pew['tau_pts'] = [ev['tau']['pre_start'], ev['tau']['pre_end'], ev['tau']['post_start'], ev['tau']['post_end']]
+                if 'delta' in ev and _valid_pts(ev['delta']):
+                    pew['slip_pts'] = [ev['delta']['pre_start'], ev['delta']['pre_end'], ev['delta']['post_start'], ev['delta']['post_end']]
+                if 'lvdt' in ev and _valid_pts(ev['lvdt']):
+                    pew['lvdt_pts'] = [ev['lvdt']['pre_start'], ev['lvdt']['pre_end'], ev['lvdt']['post_start'], ev['lvdt']['post_end']]
+            if pew:
+                pew_resolved[self.event_idx] = pew
+
         # Always read skip_events from the shared run-level list.
         self.config['skip_events'] = self.data_manager.get_run_skip_events(self.run_idx)
-
 
         self.config['per_event_windows'] = pew_resolved
 
@@ -189,23 +213,15 @@ class EventDropEditorView(tk.Toplevel):
 
         if self.event_idx in pew_resolved:
             ew = pew_resolved[self.event_idx]
-            if 'pre_win' in ew and 'post_win' in ew:
-                pw = ew['pre_win']
-                qw = ew['post_win']
-                if hasattr(pw, 'tolist'): pw = pw.tolist()
-                if hasattr(qw, 'tolist'): qw = qw.tolist()
-                legacy_pts = [pw[0], pw[1], qw[0], qw[1]]
-                self.pts = {'tau': list(legacy_pts), 'slip': list(legacy_pts), 'lvdt': list(legacy_pts)}
-            else:
-                for ch in ('tau', 'slip', 'lvdt'):
-                    key = f'{ch}_pts'
-                    if key in ew:
-                        val = ew[key]
-                        if hasattr(val, 'tolist'):
-                            val = val.tolist()
-                        elif isinstance(val, tuple):
-                            val = list(val)
-                        self.pts[ch] = list(val)
+            for ch in ('tau', 'slip', 'lvdt'):
+                key = f'{ch}_pts'
+                if key in ew:
+                    val = ew[key]
+                    if hasattr(val, 'tolist'):
+                        val = val.tolist()
+                    elif isinstance(val, tuple):
+                        val = list(val)
+                    self.pts[ch] = list(val)
 
     # ------------------------------------------------------------------
     # Figure / Canvas – created once, never destroyed
@@ -242,7 +258,9 @@ class EventDropEditorView(tk.Toplevel):
         can update their positions without clearing the axes.
         """
         ev = self.events[self.event_idx]
-        t_trig = ev['event_time'] if isinstance(ev, dict) else float(ev)
+        t_trig = _get_t_trig(ev)
+        if t_trig is None:
+            return
         half_win = config.get('window_sec', 1.5)
         t_all = self.time_history['time']
         mask = (t_all >= t_trig - half_win) & (t_all <= t_trig + half_win)
@@ -538,67 +556,15 @@ class EventDropEditorView(tk.Toplevel):
             messagebox.showwarning("Warning", "Please run Recompute first")
             return
 
-        per_event = {
-            'tau_pts': tuple(self.pts['tau']),
-            'slip_pts': tuple(self.pts['slip']),
-            'lvdt_pts': tuple(self.pts['lvdt']),
-        }
-
-        try:
-            analysis = self.data_manager.get_data(f"runs/[{self.run_idx}]/analysis")
-        except (KeyError, TypeError, ValueError):
-            analysis = None
-
-        if analysis is None or not isinstance(analysis, dict):
-            analysis = {
-                'config': dict(self.config),
-                'per_event_windows': {},
-                'results': {},
-            }
-        else:
-            if 'config' not in analysis or not isinstance(analysis['config'], dict):
-                analysis['config'] = dict(self.config)
-
-        # Remove this event from the shared skip list (reactivate it)
-        se = self.data_manager.get_run_skip_events(self.run_idx)
-        if self.event_idx in se:
-            se.remove(self.event_idx)
-        self.data_manager.save_run_skip_events(self.run_idx, se)
-        self.config['skip_events'] = se
-
-        if 'per_event_windows' not in analysis or not isinstance(analysis['per_event_windows'], dict):
-            analysis['per_event_windows'] = {}
-        if 'results' not in analysis or not isinstance(analysis['results'], dict):
-            analysis['results'] = {}
-
-        analysis['per_event_windows'][str(self.event_idx)] = per_event
-
         r = self._result
-        results = analysis['results']
-        n_events = len(self.events)
+        
+        # 移除畫圖用的殘差資料
+        for key in list(r.keys()):
+            if key.endswith('_res') or key == 'event_idx':
+                del r[key]
 
-        def _ensure_array(key, default_val=np.nan):
-            if key not in results or not isinstance(results[key], np.ndarray):
-                results[key] = np.full(n_events, default_val)
-            return results[key]
-
-        _ensure_array('trigger_time')[self.event_idx] = r.get('trigger_time', np.nan)
-        _ensure_array('delta_tau')[self.event_idx] = r.get('delta_tau', np.nan)
-        _ensure_array('delta_lvdt')[self.event_idx] = r.get('delta_lvdt', np.nan)
-        _ensure_array('D_Push')[self.event_idx] = r.get('D_Push', np.nan)
-        _ensure_array('D_max')[self.event_idx] = r.get('D_max', np.nan)
-        _ensure_array('D_E3')[self.event_idx] = r.get('D_E3', np.nan)
-
-        eddy_keys = sorted([k for k in self.time_history.keys() if 'eddy' in k.lower()])
-        for i in range(len(eddy_keys)):
-            label = f'delta_E{i+1}'
-            _ensure_array(label)[self.event_idx] = r.get(label, np.nan)
-
-        if 'skipped' not in results or not isinstance(results['skipped'], np.ndarray):
-            results['skipped'] = np.zeros(n_events, dtype=bool)
-        results['skipped'][self.event_idx] = False
-
-        self.data_manager.fast_save_analysis(self.run_idx, analysis)
+        # category=None 直接寫入根目錄，只覆寫 r 中有的項目
+        self.data_manager.fast_save_event_analysis(self.run_idx, self.event_idx, None, r)
 
         # Overwrite Event Drop diagnostic plot if the directory exists
         import os
@@ -628,6 +594,9 @@ class EventDropEditorView(tk.Toplevel):
         # Sync the restored state to shared list so both editors agree
         self._preview_active = False
 
+        if hasattr(self.parent, 'refresh_tree'):
+            self.parent.refresh_tree()
+
         msg = f"Event {self.event_idx} updated and saved to HDF5."
         messagebox.showinfo("Applied & Saved", msg)
 
@@ -639,21 +608,6 @@ class EventDropEditorView(tk.Toplevel):
         if not confirm:
             return
 
-        try:
-            analysis = self.data_manager.get_data(f"runs/[{self.run_idx}]/analysis")
-        except (KeyError, TypeError, ValueError):
-            analysis = None
-
-        if analysis is None or not isinstance(analysis, dict):
-            analysis = {
-                'config': dict(self.config),
-                'per_event_windows': {},
-                'results': {},
-            }
-
-        if 'config' not in analysis or not isinstance(analysis['config'], dict):
-            analysis['config'] = {}
-
         # Add this event to the shared skip list
         se = self.data_manager.get_run_skip_events(self.run_idx)
         if self.event_idx not in se:
@@ -661,31 +615,33 @@ class EventDropEditorView(tk.Toplevel):
         self.data_manager.save_run_skip_events(self.run_idx, se)
         self.config['skip_events'] = se
 
-        # Set results to NaN / skipped
-        results = analysis.setdefault('results', {})
-        n_events = len(self.events)
-
-        def _ensure_array(key, default_val=np.nan):
-            if key not in results or not isinstance(results[key], np.ndarray):
-                results[key] = np.full(n_events, default_val)
-            return results[key]
-
-        _ensure_array('trigger_time')[self.event_idx] = np.nan
-        _ensure_array('delta_tau')[self.event_idx] = np.nan
-        _ensure_array('delta_lvdt')[self.event_idx] = np.nan
-        _ensure_array('D_Push')[self.event_idx] = np.nan
-        _ensure_array('D_max')[self.event_idx] = np.nan
-        _ensure_array('D_E3')[self.event_idx] = np.nan
-
+        event_drop_data = {
+            'skipped': True,
+            'trigger_time': np.nan,
+            'tau': {
+                'value': np.nan,
+                'pre_start': self.pts['tau'][0], 'pre_end': self.pts['tau'][1],
+                'post_start': self.pts['tau'][2], 'post_end': self.pts['tau'][3]
+            },
+            'delta': {
+                'pre_start': self.pts['slip'][0], 'pre_end': self.pts['slip'][1],
+                'post_start': self.pts['slip'][2], 'post_end': self.pts['slip'][3]
+            },
+            'lvdt': {
+                'value': np.nan,
+                'pre_start': self.pts['lvdt'][0], 'pre_end': self.pts['lvdt'][1],
+                'post_start': self.pts['lvdt'][2], 'post_end': self.pts['lvdt'][3]
+            },
+            'D_Push': np.nan,
+            'D_max': np.nan,
+            'D_E3': np.nan,
+        }
+        
         eddy_keys = sorted([k for k in self.time_history.keys() if 'eddy' in k.lower()])
         for i in range(len(eddy_keys)):
-            _ensure_array(f'delta_E{i+1}')[self.event_idx] = np.nan
+            event_drop_data['delta'][f'E{i+1}_value'] = np.nan
 
-        if 'skipped' not in results or not isinstance(results['skipped'], np.ndarray):
-            results['skipped'] = np.zeros(n_events, dtype=bool)
-        results['skipped'][self.event_idx] = True
-
-        self.data_manager.fast_save_analysis(self.run_idx, analysis)
+        self.data_manager.fast_save_event_analysis(self.run_idx, self.event_idx, None, event_drop_data)
 
         # Delete diagnostic plot if it exists
         import os
@@ -713,6 +669,9 @@ class EventDropEditorView(tk.Toplevel):
         self._preview_active = False
         self._load_config()
         self._recompute()
+        
+        if hasattr(self.parent, 'refresh_tree'):
+            self.parent.refresh_tree()
 
 
     def on_close(self):

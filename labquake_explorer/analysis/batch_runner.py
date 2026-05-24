@@ -10,7 +10,6 @@ from typing import Dict, List, Any, Optional
 from labquake_explorer.analysis.event_drop_analyzer import (
     analyze_all_events,
     analyze_single_event,
-    results_to_arrays,
     moving_average,
     _get_t_trig,
     _get_event_windows,
@@ -181,20 +180,20 @@ def run_batch_analysis(
     config: dict,
     output_dir: Optional[str] = None,
     progress_callback=None,
-) -> Dict[str, np.ndarray]:
+) -> Dict[int, Dict]:
     """
     Run analysis on all events, generate diagnostic plots.
     """
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    results = []
+    results = {}
     n = len(events)
     skip_list = config.get('skip_events', [])
 
-    for i in range(n):
+    for i in range(1, n):
         row = analyze_single_event(time_history, events, i, config)
-        results.append(row)
+        results[i] = row
 
         # Generate diagnostic plot (skip if event is skipped)
         if output_dir and i not in skip_list and not row.get('skipped', False):
@@ -207,9 +206,9 @@ def run_batch_analysis(
                 print(f"Warning: failed to generate plot for event {i}: {e}")
 
         if progress_callback:
-            progress_callback(i + 1, n)
+            progress_callback(i, n - 1)
 
-    return results_to_arrays(results)
+    return results
 
 
 def run_batch_k_analysis(
@@ -218,26 +217,25 @@ def run_batch_k_analysis(
     config: dict,
     output_dir: Optional[str] = None,
     progress_callback=None,
-) -> Dict[str, np.ndarray]:
+) -> Dict[int, Dict]:
     """
     Run K stiffness analysis on all events, generate diagnostic plots.
     """
     from labquake_explorer.analysis.k_stiffness_analyzer import (
         analyze_single_k,
-        k_results_to_arrays,
         generate_k_diagnostic_plot,
     )
 
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    results = []
+    results = {}
     n = len(events)
     skip_list = config.get('skip_events', [])
 
-    for i in range(n):
+    for i in range(1, n):
         row = analyze_single_k(time_history, events, i, config)
-        results.append(row)
+        results[i] = row
 
         if output_dir and i not in skip_list and not row.get('skipped', False):
             save_path = os.path.join(output_dir, f"Event_{i:03d}_k.png")
@@ -249,6 +247,6 @@ def run_batch_k_analysis(
                 print(f"Warning: failed to generate K plot for event {i}: {e}")
 
         if progress_callback:
-            progress_callback(i + 1, n)
+            progress_callback(i, n - 1)
 
-    return k_results_to_arrays(results)
+    return results

@@ -6,6 +6,7 @@ continuous waveforms (slip, mu).
 import tkinter as tk
 from tkinter import ttk, messagebox
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from labquake_explorer.analysis.event_drop_analyzer import _get_t_trig
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import numpy as np
@@ -54,25 +55,49 @@ class SummaryAnalysisView(tk.Toplevel):
             self.destroy()
             return
 
-        # Load analysis results (may not exist yet)
+        # Load analysis results from events directly
         self.analysis = None
-        self.results = None
-        try:
-            self.analysis = self.data_manager.get_data(
-                f"runs/[{self.run_idx}]/analysis"
-            )
-            if isinstance(self.analysis, dict):
-                self.results = self.analysis.get('results', None)
-        except Exception:
-            pass
+        self.results = {}
+        keys_to_extract = ['delta_tau', 'delta_lvdt', 'D_Push', 'D_max', 'D_E3', 'skipped', 'k']
+        
+        # Determine any dynamic keys (e.g., delta_E1) from the first available event
+        for ev in self.events:
+            if isinstance(ev, dict) and 'delta' in ev:
+                keys_to_extract.extend([k for k in ev['delta'].keys() if k.endswith('_value')])
+                break
+                
+        # Build arrays for each key
+        for k in keys_to_extract:
+            arr = []
+            for ev in self.events:
+                if not isinstance(ev, dict):
+                    arr.append(np.nan)
+                    continue
+                if k == 'delta_tau':
+                    arr.append(ev.get('tau', {}).get('value', np.nan))
+                elif k == 'delta_lvdt':
+                    arr.append(ev.get('lvdt', {}).get('value', np.nan))
+                elif k == 'k':
+                    k_obj = ev.get('k', np.nan)
+                    arr.append(k_obj.get('value', np.nan) if isinstance(k_obj, dict) else k_obj)
+                elif k.endswith('_value') and k.startswith('E'): # E1_value, E2_value
+                    arr.append(ev.get('delta', {}).get(k, np.nan))
+                else:
+                    arr.append(ev.get(k, np.nan))
+            
+            # 轉換動態鍵名（E1_value -> delta_E1）以維持後續邏輯一致
+            final_key = f'delta_{k.split("_")[0]}' if k.endswith('_value') else k
+            self.results[final_key] = np.array(arr)
+            
+        # Convert skipped to boolean array explicitly
+        if 'skipped' in self.results:
+            self.results['skipped'] = np.array([bool(x) if not np.isnan(x) else False for x in self.results['skipped']])
 
         # Trigger times for vertical lines
         self.trigger_times = []
         for ev in self.events:
-            if isinstance(ev, dict) and 'event_time' in ev:
-                self.trigger_times.append(ev['event_time'])
-            elif isinstance(ev, (float, int, np.number)):
-                self.trigger_times.append(float(ev))
+            t = _get_t_trig(ev)
+            self.trigger_times.append(t if t is not None else np.nan)
         self.trigger_times = np.array(self.trigger_times)
 
         # Figure state
@@ -139,24 +164,30 @@ class SummaryAnalysisView(tk.Toplevel):
 
         # Event dropdowns
         n_events = len(self.events)
-        options = [str(i) for i in range(n_events)]
+        options = [str(i) for i in range(1, n_events)]
         self.start_combo.config(values=options)
         self.end_combo.config(values=options)
         
         # 讀取該實驗專屬的記憶 (HDF5 內部)，只用於記錄事件區間
         local_config = {}
-        if isinstance(self.analysis, dict) and 'config' in self.analysis:
-            local_config = self.analysis['config'].get('summary_config', {})
+        try:
+            run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
+            if isinstance(run_data, dict) and 'config' in run_data:
+                local_config = run_data['config'].get('summary_config', {})
+        except Exception:
+            pass
             
         # Load start/end selection (從檔案專屬設定讀取)
-        start_idx = local_config.get('start_idx', 0)
-        end_idx = local_config.get('end_idx', n_events - 1)
-        # Validate indices
-        start_idx = max(0, min(start_idx, n_events - 1))
-        end_idx = max(0, min(end_idx, n_events - 1))
+        start_idx = local_config.get('start_idx', 1) - 1  # 1-based to 0-based index
+        end_idx = local_config.get('end_idx', n_events - 1) - 1
         
-        self.start_combo.current(start_idx)
-        self.end_combo.current(end_idx)
+        # Validate indices
+        cb_len = len(options)
+        if cb_len > 0:
+            start_idx = max(0, min(start_idx, cb_len - 1))
+            end_idx = max(0, min(end_idx, cb_len - 1))
+            self.start_combo.current(start_idx)
+            self.end_combo.current(end_idx)
 
         # Load checkbox states
         if 'subplots' in saved_config:
@@ -178,15 +209,13 @@ class SummaryAnalysisView(tk.Toplevel):
     def _get_active_subplots(self):
         return [key for key, _ in SUMMARY_SUBPLOT_DEFS if key in self.subplot_vars and self.subplot_vars[key].get()]
 
-    def _get_event_time(self, idx):
-        """Robustly get event time from events list."""
-        try:
-            ev = self.events[idx]
-            if isinstance(ev, dict):
-                return ev.get('event_time', 0.0)
-            return float(ev)
-        except (IndexError, TypeError, ValueError):
-            return 0.0
+    def _get_event_time(self, ev_idx):
+        if ev_idx < len(self.events):
+            t = _get_t_trig(self.events[ev_idx])
+            if t is not None:
+                return t
+        # Fallback if valid event time is completely missing
+        return np.nan
 
     def rebuild_figure(self):
         active = self._get_active_subplots()
@@ -301,25 +330,25 @@ class SummaryAnalysisView(tk.Toplevel):
 
         active = self._get_active_subplots()
 
-        # Helper: filter analysis results to event range
         def _get_analysis_in_range(key):
-            if self.results is None or not isinstance(self.results, dict):
+            if key not in self.results:
                 return None, None
-            arr = self.results.get(key)
-            trigs = self.results.get('trigger_time')
-            if arr is None or trigs is None:
-                return None, None
-            try:
-                arr = np.asarray(arr, dtype=float)
-                trigs = np.asarray(trigs, dtype=float)
-                if arr.shape != trigs.shape:
-                    min_len = min(len(arr), len(trigs))
-                    arr = arr[:min_len]
-                    trigs = trigs[:min_len]
-                rmask = (trigs >= t_start - 1) & (trigs <= t_end + 1)
-                return trigs[rmask] - t_offset, arr[rmask]
-            except Exception:
-                return None, None
+            
+            arr = self.results[key]
+            trigs = self.trigger_times
+            
+            # Ignore event 0 (placeholder)
+            valid_mask = np.ones(len(trigs), dtype=bool)
+            valid_mask[0] = False
+            
+            # Mask by valid trigger times within the current viewport range
+            range_mask = valid_mask & ~np.isnan(trigs) & (trigs >= t_start - 1) & (trigs <= t_end + 1)
+            
+            # 檢查 skipped
+            if 'skipped' in self.results:
+                range_mask &= ~self.results['skipped']
+            
+            return trigs[range_mask] - t_offset, arr[range_mask]
 
         # --- (1) Slip ---
         if 'slip' in self.axs_map:
@@ -433,32 +462,13 @@ class SummaryAnalysisView(tk.Toplevel):
         # --- (7) Stiffness k ---
         if 'stiffness' in self.axs_map:
             ax = self.axs_map['stiffness']
-            # Read k values from k_analysis (independent from drop analysis)
-            k_results = None
-            try:
-                k_analysis = self.data_manager.get_data(
-                    f"runs/[{self.run_idx}]/k_analysis"
-                )
-                if isinstance(k_analysis, dict):
-                    k_results = k_analysis.get('results', None)
-            except Exception:
-                pass
-
             has_data = False
-            if k_results and isinstance(k_results, dict):
-                k_trigger = k_results.get('trigger_time', k_results.get('trigger_times', None))
-                k_vals = k_results.get('k', None)
-                if k_trigger is not None and k_vals is not None:
-                    k_trigger = np.asarray(k_trigger)
-                    k_vals = np.asarray(k_vals)
-                    # Filter to event range
-                    range_mask = (k_trigger >= t_start) & (k_trigger <= t_end)
-                    t_r = k_trigger[range_mask] - t_offset
-                    vals = k_vals[range_mask]
-                    valid = ~np.isnan(vals)
-                    if np.any(valid):
-                        ax.plot(t_r[valid], vals[valid], 'o-', color='teal', markersize=3)
-                        has_data = True
+            t_r, vals = _get_analysis_in_range('k')
+            if t_r is not None and len(t_r) > 0:
+                valid = ~np.isnan(vals)
+                if np.any(valid):
+                    ax.plot(t_r[valid], vals[valid], 'o-', color='teal', markersize=3)
+                    has_data = True
 
             if not has_data:
                 ax.text(0.5, 0.5, 'Run "Run K Analysis" first',
@@ -644,30 +654,56 @@ class SummaryAnalysisView(tk.Toplevel):
         
         # Local config: Includes event indices
         local_config = dict(global_config)
-        local_config['start_idx'] = self.start_combo.current()
-        local_config['end_idx'] = self.end_combo.current()
+        try:
+            local_config['start_idx'] = int(self.start_combo.get())
+            local_config['end_idx'] = int(self.end_combo.get())
+        except ValueError:
+            local_config['start_idx'] = 1
+            local_config['end_idx'] = len(self.events) - 1
         
         # Save globally using UserPrefs
         UserPrefs.set('SummaryAnalysisView', 'config', global_config)
         
         # Update analysis config in DataManager (for file persistence, local)
-        run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
-        if 'analysis' not in run_data:
-            run_data['analysis'] = {}
-        if 'config' not in run_data['analysis']:
-            run_data['analysis']['config'] = {}
-        
-        run_data['analysis']['config']['summary_config'] = local_config
+        try:
+            run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
+            config = run_data.setdefault('config', {})
+            config['summary_config'] = local_config
+        except Exception as e:
+            print(f"Warning: failed to save summary config in memory: {e}")
 
     def on_close(self):
         try:
             self._save_summary_config()
-            # [NEW] Persist summary config to HDF5 file using fast_save
+            # Persist summary config to HDF5 file using fast_save
             run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
-            if 'analysis' in run_data:
-                self.data_manager.fast_save_analysis(self.run_idx, run_data['analysis'])
+            if 'config' in run_data:
+                # Custom fast save for config group
+                import h5py
+                data_path = self.data_manager.data_path
+                if data_path and data_path.exists() and data_path.suffix.lower() in ['.h5', '.hdf5']:
+                    with h5py.File(data_path, 'r+') as f:
+                        config_path = f"runs/{self.run_idx}/config"
+                        if config_path in f:
+                            del f[config_path]
+                        config_group = f.create_group(config_path)
+                        def recursive_save(group, d):
+                            for k, v in d.items():
+                                if isinstance(v, dict):
+                                    sub = group.create_group(k)
+                                    recursive_save(sub, v)
+                                elif isinstance(v, (list, tuple)):
+                                    arr = np.array(v)
+                                    if arr.dtype.kind == 'U':
+                                        arr = np.array([x.encode() for x in arr.flat]).reshape(arr.shape)
+                                    group.create_dataset(k, data=arr)
+                                elif isinstance(v, str):
+                                    group.create_dataset(k, data=v.encode())
+                                else:
+                                    group.create_dataset(k, data=v)
+                        recursive_save(config_group, run_data['config'])
         except Exception as e:
-            print(f"Warning: failed to save summary config: {e}")
+            print(f"Warning: failed to save summary config to HDF5: {e}")
             
         if self.figure:
             plt.close(self.figure)

@@ -24,9 +24,17 @@ class EventProcessor:
         Returns:
             List of extracted event dictionaries
         """
-        events = []
+        events = [{"name": "(No Data)"}]
+        existing_events = run_data.get('events', [{"name": "(No Data)"}])
+        
         for i, idx in enumerate(event_indices):
-            event = {}
+            event_idx = i + 1
+            # Preserve existing metadata (like 'drop', 'k') if it exists
+            if event_idx < len(existing_events) and isinstance(existing_events[event_idx], dict):
+                event = existing_events[event_idx].copy()
+            else:
+                event = {}
+            
             event_time = run_data["time"][idx]
             
             # Extract time window around event

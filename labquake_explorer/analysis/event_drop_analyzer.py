@@ -194,27 +194,47 @@ def analyze_single_event(
     """
     Analyze one event and return computed drop values.
 
-    Returns a dict with keys:
-        trigger_time, delta_tau, delta_slip_chXX (per eddy channel),
-        delta_lvdt, D_Push, D_max, D_E3, skipped
+    Returns a nested dict matching the new schema.
     """
     tau_pts, slip_pts, lvdt_pts = _get_event_windows(event_idx, config)
     skip_list = config.get('skip_events', [])
     half_win = config.get('window_sec', 1.5)
 
     eddy_keys = sorted([k for k in time_history.keys() if 'eddy' in k.lower()])
+    
     row = {
         'event_idx': event_idx,
         'skipped': event_idx in skip_list,
         'trigger_time': np.nan,
-        'delta_tau': np.nan,
-        'delta_lvdt': np.nan,
+        'tau': {
+            'value': np.nan,
+            'pre_start': tau_pts[0] if tau_pts else np.nan,
+            'pre_end': tau_pts[1] if tau_pts else np.nan,
+            'post_start': tau_pts[2] if tau_pts else np.nan,
+            'post_end': tau_pts[3] if tau_pts else np.nan,
+            'smooth_w': config.get('tau_smooth_w', 100),
+        },
+        'delta': {
+            'pre_start': slip_pts[0] if slip_pts else np.nan,
+            'pre_end': slip_pts[1] if slip_pts else np.nan,
+            'post_start': slip_pts[2] if slip_pts else np.nan,
+            'post_end': slip_pts[3] if slip_pts else np.nan,
+        },
+        'lvdt': {
+            'value': np.nan,
+            'pre_start': lvdt_pts[0] if lvdt_pts else np.nan,
+            'pre_end': lvdt_pts[1] if lvdt_pts else np.nan,
+            'post_start': lvdt_pts[2] if lvdt_pts else np.nan,
+            'post_end': lvdt_pts[3] if lvdt_pts else np.nan,
+            'smooth_w': config.get('lvdt_smooth_w', 100),
+        },
         'D_Push': np.nan,
         'D_max': np.nan,
         'D_E3': np.nan,
     }
+    
     for i in range(len(eddy_keys)):
-        row[f'delta_E{i+1}'] = np.nan
+        row['delta'][f'E{i+1}_value'] = np.nan
 
     t_trig = _get_t_trig(events[event_idx])
     if t_trig is None:
@@ -245,7 +265,7 @@ def analyze_single_event(
     tau_sm = tau_sm - tau_sm[0]
 
     res_tau = calculate_2pt_trend_drop(t_rel, tau_sm, tau_pts)
-    row['delta_tau'] = abs(res_tau['delta']) if res_tau['valid'] else np.nan
+    row['tau']['value'] = abs(res_tau['delta']) if res_tau['valid'] else np.nan
     row['tau_res'] = res_tau  # keep full result for plotting
 
     # --- delta_slip (each eddy channel) ---
@@ -253,9 +273,8 @@ def analyze_single_event(
     for i, k in enumerate(eddy_keys):
         d = time_history[k][mask] - time_history[k][mask][0]
         res_slip = calculate_2pt_trend_drop(t_rel, d, slip_pts)
-        label = f'delta_E{i+1}'
-        row[label] = abs(res_slip['delta']) if res_slip['valid'] else np.nan
-        row[f'{label}_res'] = res_slip
+        row['delta'][f'E{i+1}_value'] = abs(res_slip['delta']) if res_slip['valid'] else np.nan
+        row[f'delta_E{i+1}_res'] = res_slip
 
     # --- delta_lvdt ---
     lvdt_raw = time_history['LP_displacement'][mask]
@@ -265,14 +284,10 @@ def analyze_single_event(
     lvdt_0 = lvdt_sm - lvdt_sm[0]
 
     res_lvdt = calculate_2pt_trend_drop(t_rel, lvdt_0, lvdt_pts)
-    row['delta_lvdt'] = abs(res_lvdt['delta']) if res_lvdt['valid'] else np.nan
+    row['lvdt']['value'] = abs(res_lvdt['delta']) if res_lvdt['valid'] else np.nan
     row['lvdt_res'] = res_lvdt
 
     # --- D values ---
-    row['D_Push'] = np.nan
-    row['D_max'] = np.nan
-    row['D_E3'] = np.nan
-
     is_1d = time_history.get('is_1d', False)
 
     if not is_1d:
@@ -328,45 +343,10 @@ def analyze_all_events(
     time_history: Dict[str, np.ndarray],
     events: List[Dict],
     config: dict,
-) -> List[Dict[str, Any]]:
-    """Run analysis on all events. Returns list of result dicts."""
-    results = []
-    for i in range(len(events)):
+) -> Dict[int, Dict[str, Any]]:
+    """Run analysis on all events. Returns dict of result dicts."""
+    results = {}
+    for i in range(1, len(events)):
         row = analyze_single_event(time_history, events, i, config)
-        results.append(row)
+        results[i] = row
     return results
-
-
-def results_to_arrays(results: List[Dict]) -> Dict[str, np.ndarray]:
-    """
-    Convert list-of-dicts results into dict-of-arrays for HDF5 storage.
-    Excludes internal keys (*_res).
-    """
-    if not results:
-        return {}
-
-    # Collect all numeric keys present in ANY result row
-    all_keys = set()
-    for r in results:
-        for k in r.keys():
-            if k.endswith('_res') or k in ['skipped', 'event_idx']:
-                continue
-            all_keys.add(k)
-    keys = sorted(list(all_keys))
-
-
-    out: Dict[str, np.ndarray] = {}
-    for k in keys:
-        vals = []
-        for r in results:
-            v = r.get(k, np.nan)
-            if isinstance(v, (int, float, np.number)):
-                vals.append(float(v))
-            else:
-                vals.append(np.nan)
-        out[k] = np.array(vals)
-
-    # skipped mask
-    out['skipped'] = np.array([r.get('skipped', False) for r in results], dtype=bool)
-
-    return out

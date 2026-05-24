@@ -30,53 +30,45 @@ def export_h5_to_csv(h5_path: str):
             run = runs_group[run_key]
             run_name = run['name'][()].decode() if 'name' in run else f"run{run_key}"
 
-            drop_results = run['analysis']['results'] if ('analysis' in run and 'results' in run['analysis']) else {}
-            k_results = run['k_analysis']['results'] if ('k_analysis' in run and 'results' in run['k_analysis']) else {}
-
-            if not drop_results and not k_results:
-                print(f"  [{run_name}] 沒有 drop 或 k 的分析結果，跳過", flush=True)
+            if 'events' not in run:
+                print(f"  [{run_name}] 沒有 events 資料，跳過", flush=True)
                 continue
 
-            results = {}
-            for d in (drop_results, k_results):
-                for k in d.keys():
-                    results[k] = d[k]
+            events_grp = run['events']
+            event_keys = sorted([k for k in events_grp.keys() if k.isdigit() and int(k) > 0], key=int)
+            n_events = len(event_keys)
 
-            # 固定匯出所有的欄位，避免各個 run 欄位不同導致 CSV 錯位 (ParserError)
+            if n_events == 0:
+                print(f"  [{run_name}] 沒有實體事件結果，跳過", flush=True)
+                continue
+
             export_keys = ordered_keys
 
-            # 讀取資料與總筆數
-            data = {}
-            n_events = 0
-            for k in export_keys:
-                if k in results:
-                    arr = results[k][()]
-                    data[k] = arr
-                    n_events = max(n_events, len(arr))
-                else:
-                    data[k] = []
-
-            # 讀取共用 skip_events (或從舊的 results['skipped'] fallback)
-            skipped = np.zeros(n_events, dtype=bool)
+            # 讀取共用 skip_events
+            skipped_list = []
             if 'skip_events' in run:
                 se_obj = run['skip_events']
                 if isinstance(se_obj, h5py.Group):
-                    # 舊版 HDF5 結構中 skip_events 可能被存成 Group (包含 '0', '1', '2' ... 等 dataset)
-                    se = [int(se_obj[k][()]) for k in sorted(se_obj.keys(), key=lambda x: int(x))]
+                    skipped_list = [int(se_obj[k][()]) for k in sorted(se_obj.keys(), key=int)]
                 else:
-                    se = se_obj[()]
-                for idx in se:
-                    if idx < n_events:
-                        skipped[idx] = True
-            elif 'skipped' in results:
-                skipped = results['skipped'][()].astype(bool)
+                    skipped_list = se_obj[()].tolist() if hasattr(se_obj[()], 'tolist') else list(se_obj[()])
 
-            for i in range(n_events):
-                row = [run_name, i + 1]
+            for ev_key in event_keys:
+                ev_idx = int(ev_key)
+                ev_grp = events_grp[ev_key]
+                row = [run_name, ev_idx]
+                
                 for k in export_keys:
-                    val = data[k][i] if i < len(data[k]) else np.nan
+                    val = np.nan
+                    if 'drop' in ev_grp and k in ev_grp['drop']:
+                        val = ev_grp['drop'][k][()]
+                    elif 'k' in ev_grp and k in ev_grp['k']:
+                        val = ev_grp['k'][k][()]
+                        
                     row.append(f"{val:.6g}" if not np.isnan(val) else "")
-                row.append("YES" if skipped[i] else "")
+                    
+                is_skipped = (ev_idx in skipped_list)
+                row.append("YES" if is_skipped else "")
                 all_rows.append((row, export_keys))
 
         if not all_rows:

@@ -226,9 +226,22 @@ class LabquakeExplorer:
 
         # Try to re-select the previously selected item by matching its full path
         if selected_path:
-            for item in self.data_tree.get_children(""):
-                if self._find_and_focus_item(item, selected_path):
-                    break
+            self._select_by_full_path(selected_path)
+
+    def _select_by_full_path(self, target_path, parent="", current_prefix=""):
+        """Find and select a tree item by its full path."""
+        for child in self.data_tree.get_children(parent):
+            label = self.data_tree.item(child, "text").split(":")[0].strip()
+            path = f"{current_prefix}/{label}" if current_prefix else label
+            if path == target_path:
+                self.data_tree.focus(child)
+                self.data_tree.selection_set(child)
+                self.data_tree.see(child)
+                return True
+            if target_path.startswith(path + "/"):
+                if self._select_by_full_path(target_path, child, path):
+                    return True
+        return False
 
     def _select_by_text(self, target_text, parent=""):
         """Find and select a tree item by its label text."""
@@ -478,20 +491,21 @@ class LabquakeExplorer:
         # Load shared skip_events from run-level shared list
         cfg['skip_events'] = self.data_manager.get_run_skip_events(run_idx)
 
-        default_start = 0
+        default_start = 1
         default_end = len(events) - 1
         # Try to load existing config from this run to persist settings
         try:
-            existing_analysis = self.data_manager.get_data(f"runs/[{run_idx}]/analysis")
-            if isinstance(existing_analysis, dict) and 'config' in existing_analysis:
-                summary_cfg = existing_analysis['config'].get('summary_config', {})
-                if 'start_idx' in summary_cfg:
-                    default_start = int(summary_cfg['start_idx'])
-                if 'end_idx' in summary_cfg:
-                    default_end = int(summary_cfg['end_idx'])
-
-                old_cfg = existing_analysis['config']
+            run_data = self.data_manager.get_data(f"runs/[{run_idx}]")
+            if isinstance(run_data, dict) and 'config' in run_data:
+                old_cfg = run_data['config']
                 if isinstance(old_cfg, dict):
+                    if 'summary_config' in old_cfg:
+                        default_start = int(old_cfg['summary_config'].get('start_idx', default_start))
+                        default_end = int(old_cfg['summary_config'].get('end_idx', default_end))
+                    if 'batch_run_range' in old_cfg:
+                        default_start = int(old_cfg['batch_run_range'].get('start_event', default_start))
+                        default_end = int(old_cfg['batch_run_range'].get('end_event', default_end))
+                    
                     # Restore pre_win / post_win (may be ndarray from HDF5)
                     if 'pre_win' in old_cfg:
                         pw = old_cfg['pre_win']
@@ -501,13 +515,10 @@ class LabquakeExplorer:
                         pw = old_cfg['post_win']
                         if hasattr(pw, 'tolist'): pw = pw.tolist()
                         cfg['post_win'] = tuple(float(x) for x in pw)
-                    # Restore scalar settings
                     for k in ['tau_smooth_w', 'lvdt_smooth_w']:
-                        if k in old_cfg:
-                            cfg[k] = int(old_cfg[k])
+                        if k in old_cfg: cfg[k] = int(old_cfg[k])
                     for k in ['push_speed', 'delay_sec', 'window_sec']:
-                        if k in old_cfg:
-                            cfg[k] = float(old_cfg[k])
+                        if k in old_cfg: cfg[k] = float(old_cfg[k])
         except Exception:
             pass
 
@@ -582,6 +593,18 @@ class LabquakeExplorer:
             try:
                 start_ev = int(entries['start_event'].get())
                 end_ev = int(entries['end_event'].get())
+                
+                # Save batch_run_range to HDF5
+                try:
+                    run_data = self.data_manager.get_data(f"runs/[{run_idx}]")
+                    if isinstance(run_data, dict):
+                        cfg_dict = run_data.setdefault('config', {})
+                        cfg_dict['batch_run_range'] = {'start_event': start_ev, 'end_event': end_ev}
+                        if self.data_manager.data_path:
+                            self.data_manager.save_file(self.data_manager.data_path)
+                except Exception:
+                    pass
+
                 for i in range(len(events)):
                     if i < start_ev or i > end_ev:
                         if i not in cfg['skip_events']:
@@ -595,24 +618,31 @@ class LabquakeExplorer:
             self.root.config(cursor="wait")
             self.root.update()
             try:
-                arrays = run_batch_analysis(
+                results_dict = run_batch_analysis(
                     time_history, events, cfg,
                     output_dir=output_dir
                 )
 
                 # Store results in memory
                 run_data = self.data_manager.get_data(f"runs/[{run_idx}]")
-                run_data['analysis'] = {
-                    'config': {
-                        'pre_win': list(cfg['pre_win']),
-                        'post_win': list(cfg['post_win']),
-                        'tau_smooth_w': cfg['tau_smooth_w'],
-                        'lvdt_smooth_w': cfg['lvdt_smooth_w'],
-                        'skip_events': cfg['skip_events'],
-                    },
-                    'per_event_windows': {},
-                    'results': {k: v for k, v in arrays.items()},
-                }
+                run_config = run_data.setdefault('config', {})
+                run_config.update({
+                    'pre_win': list(cfg['pre_win']),
+                    'post_win': list(cfg['post_win']),
+                    'tau_smooth_w': cfg['tau_smooth_w'],
+                    'lvdt_smooth_w': cfg['lvdt_smooth_w'],
+                    'skip_events': cfg['skip_events'],
+                })
+                # Remove legacy configs if they still exist in memory
+                run_data.pop('analysis_config', None)
+                run_data.pop('analysis', None)
+                for ev_idx, res in results_dict.items():
+                    # 移除僅供畫圖使用的暫存資料
+                    for k in list(res.keys()):
+                        if k.endswith('_res') or k == 'event_idx':
+                            del res[k]
+                    # category=None 表示直接寫入 events[ev_idx] 的根目錄，不建立 drop 資料夾
+                    self.data_manager.fast_save_event_analysis(run_idx, ev_idx, None, res)
 
                 self.refresh_tree()
                 messagebox.showinfo(
@@ -715,32 +745,24 @@ class LabquakeExplorer:
         # Load shared skip_events from run-level shared list
         cfg['skip_events'] = self.data_manager.get_run_skip_events(run_idx)
 
-        default_start = 0
+        default_start = 1
         default_end = len(events) - 1
         try:
-            existing_analysis = self.data_manager.get_data(f"runs/[{run_idx}]/analysis")
-            if isinstance(existing_analysis, dict) and 'config' in existing_analysis:
-                summary_cfg = existing_analysis['config'].get('summary_config', {})
-                if 'start_idx' in summary_cfg:
-                    default_start = int(summary_cfg['start_idx'])
-                if 'end_idx' in summary_cfg:
-                    default_end = int(summary_cfg['end_idx'])
-        except Exception:
-            pass
-
-        # Load existing k_analysis config
-        try:
-            existing = self.data_manager.get_data(f"runs/[{run_idx}]/k_analysis")
-            if isinstance(existing, dict) and 'config' in existing:
-                old_cfg = existing['config']
+            run_data = self.data_manager.get_data(f"runs/[{run_idx}]")
+            if isinstance(run_data, dict) and 'config' in run_data:
+                old_cfg = run_data['config']
                 if isinstance(old_cfg, dict):
+                    if 'summary_config' in old_cfg:
+                        default_start = int(old_cfg['summary_config'].get('start_idx', default_start))
+                        default_end = int(old_cfg['summary_config'].get('end_idx', default_end))
+                    if 'batch_run_range' in old_cfg:
+                        default_start = int(old_cfg['batch_run_range'].get('start_event', default_start))
+                        default_end = int(old_cfg['batch_run_range'].get('end_event', default_end))
+                        
                     for k in ['k_pre_start', 'k_pre_end', 'k_window_sec', 'k_highpass_freq', 'k_lowpass_freq']:
-                        if k in old_cfg:
-                            cfg[k] = float(old_cfg[k])
-                    if 'k_smooth_w' in old_cfg:
-                        cfg['k_smooth_w'] = int(old_cfg['k_smooth_w'])
-                    if 'k_use_ransac' in old_cfg:
-                        cfg['k_use_ransac'] = bool(old_cfg['k_use_ransac'])
+                        if k in old_cfg: cfg[k] = float(old_cfg[k])
+                    if 'k_smooth_w' in old_cfg: cfg['k_smooth_w'] = int(old_cfg[k])
+                    if 'k_use_ransac' in old_cfg: cfg['k_use_ransac'] = bool(old_cfg['k_use_ransac'])
         except Exception:
             pass
 
@@ -824,6 +846,18 @@ class LabquakeExplorer:
             try:
                 start_ev = int(entries['start_event'].get())
                 end_ev = int(entries['end_event'].get())
+                
+                # Save batch_run_range to HDF5
+                try:
+                    run_data = self.data_manager.get_data(f"runs/[{run_idx}]")
+                    if isinstance(run_data, dict):
+                        cfg_dict = run_data.setdefault('config', {})
+                        cfg_dict['batch_run_range'] = {'start_event': start_ev, 'end_event': end_ev}
+                        if self.data_manager.data_path:
+                            self.data_manager.save_file(self.data_manager.data_path)
+                except Exception:
+                    pass
+
                 for i in range(len(events)):
                     if i < start_ev or i > end_ev:
                         if i not in cfg['skip_events']:
@@ -836,26 +870,32 @@ class LabquakeExplorer:
             self.root.config(cursor="wait")
             self.root.update()
             try:
-                arrays = run_batch_k_analysis(
+                results_dict = run_batch_k_analysis(
                     time_history, events, cfg,
                     output_dir=output_dir
                 )
 
                 run_data = self.data_manager.get_data(f"runs/[{run_idx}]")
-                run_data['k_analysis'] = {
-                    'config': {
-                        'k_pre_start': cfg['k_pre_start'],
-                        'k_pre_end': cfg['k_pre_end'],
-                        'k_smooth_w': cfg['k_smooth_w'],
-                        'k_highpass_freq': cfg['k_highpass_freq'],
-                        'k_lowpass_freq': cfg.get('k_lowpass_freq', 0.0),
-                        'k_use_ransac': cfg['k_use_ransac'],
-                        'skip_events': cfg['skip_events'],
-                    },
-                    'per_event_config': {},
-                    'results': {k: v for k, v in arrays.items()},
-                }
-
+                run_config = run_data.setdefault('config', {})
+                run_config.update({
+                    'k_pre_start': cfg['k_pre_start'],
+                    'k_pre_end': cfg['k_pre_end'],
+                    'k_smooth_w': cfg['k_smooth_w'],
+                    'k_highpass_freq': cfg['k_highpass_freq'],
+                    'k_lowpass_freq': cfg.get('k_lowpass_freq', 0.0),
+                    'k_use_ransac': cfg['k_use_ransac'],
+                    'skip_events': cfg['skip_events'],
+                })
+                # Remove legacy configs if they still exist in memory
+                run_data.pop('k_analysis_config', None)
+                run_data.pop('k_analysis', None)
+                for ev_idx, res in results_dict.items():
+                    # 移除僅供畫圖使用的暫存資料
+                    for key in list(res.keys()):
+                        if key.endswith('_coeffs') or key == 'event_idx':
+                            del res[key]
+                    # category=None 表示直接寫入 events[ev_idx] 的根目錄，只覆寫 'k', 'skipped', 等變數，不會覆寫 'drop'
+                    self.data_manager.fast_save_event_analysis(run_idx, ev_idx, None, res)
                 self.refresh_tree()
                 messagebox.showinfo(
                     "Done",
