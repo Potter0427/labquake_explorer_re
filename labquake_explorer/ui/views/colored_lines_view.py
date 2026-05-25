@@ -107,6 +107,8 @@ class ColoredLinesView(tk.Toplevel):
         # Entry for direct input
         self.sample_entry = ttk.Entry(ctrl_frame, width=6)
         self.sample_entry.grid(row=0, column=6, padx=5, pady=5)
+        self.sample_entry.bind("<Return>", self._on_entry_change)
+        self.sample_entry.bind("<FocusOut>", self._on_entry_change)
         # 讀取全域配置 (不再侷限於單一 HDF5)
         saved_config = UserPrefs.get('ColoredLinesView', 'config', {})
         if 'samples' in saved_config:
@@ -316,11 +318,34 @@ class ColoredLinesView(tk.Toplevel):
             label='Time [s]'
         )
 
+        # Draw VW range in the middle
+        try:
+            vw_name = self.data_manager.data.get('name', '')
+            if isinstance(vw_name, bytes):
+                vw_name = vw_name.decode()
+            elif hasattr(vw_name, 'item'):
+                vw_name = vw_name.item()
+            if isinstance(vw_name, bytes):
+                vw_name = vw_name.decode()
+                
+            import re
+            match = re.search(r'(\d+)(P|PC)', str(vw_name).upper())
+            if match:
+                vw_size = float(match.group(1))
+                vw_start = 250 - vw_size / 2.0
+                vw_end = 250 + vw_size / 2.0
+                self.ax.axvspan(vw_start, vw_end, alpha=0.15, color='#009FCC', label='VW Zone', zorder=0)
+        except Exception as e:
+            pass
+
         # Axes labels / formatting
-        self.ax.set_xlabel('Distance [mm]')
+        self.ax.set_xlabel('Distance along fault [mm]')
         self.ax.set_ylabel('Slip [\u03bcm]')
-        self.ax.grid(True, linestyle='-', alpha=0.6) # Standard alpha
+        self.ax.grid(True, axis='x', linestyle='-', alpha=0.6) # Standard alpha, vertical only
         self.ax.set_xticks(self.positions)
+        self.ax.margins(x=0)
+        max_slip = np.max(d_samp) if d_samp.size > 0 else 1
+        self.ax.set_ylim(0, max_slip)
 
         self.canvas.draw()
 
