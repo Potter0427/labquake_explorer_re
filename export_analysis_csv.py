@@ -1,9 +1,10 @@
 """
-從 HDF5 檔案中匯出 Drop Analysis 結果為 CSV。
+從 HDF5 檔案中匯出 Drop Analysis 與 K Stiffness 結果為 CSV。
 自動偵測當前目錄下的所有 .h5 檔案，每個實驗匯出一個 CSV（所有 Run 合併）。
+此版本僅支援最新版的資料結構。
 
 用法：
-    python export_analysis_csv.py
+    python export_analysis_csv_new.py
 """
 import glob
 import h5py
@@ -19,8 +20,8 @@ def export_h5_to_csv(h5_path: str):
         runs_group = f['runs']
         run_keys = sorted(runs_group.keys(), key=lambda x: int(x))
 
-        # 定義匯出欄位順序（加入 k）
-        ordered_keys = ['trigger_time', 'k', 'delta_tau',
+        # 定義匯出欄位順序
+        ordered_keys = ['event_time', 'k', 'delta_tau',
                         'delta_E1', 'delta_E2', 'delta_E3', 'delta_E4', 'delta_E5',
                         'delta_lvdt', 'D_Push', 'D_max', 'D_E3']
 
@@ -61,12 +62,10 @@ def export_h5_to_csv(h5_path: str):
                 for k in export_keys:
                     val = np.nan
                     try:
-                        if k == 'trigger_time':
+                        if k == 'event_time':
                             if 'event_time' in ev_grp: val = ev_grp['event_time'][()]
-                            elif 'trigger_time' in ev_grp: val = ev_grp['trigger_time'][()]
                         elif k == 'k':
                             if 'k' in ev_grp and 'value' in ev_grp['k']: val = ev_grp['k']['value'][()]
-                            elif 'k' in ev_grp and 'k' in ev_grp['k']: val = ev_grp['k']['k'][()]
                         elif k == 'delta_tau':
                             if 'tau' in ev_grp and 'value' in ev_grp['tau']: val = ev_grp['tau']['value'][()]
                         elif k.startswith('delta_E'):
