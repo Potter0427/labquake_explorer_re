@@ -5,6 +5,8 @@ from matplotlib.figure import Figure
 from matplotlib import cm
 import matplotlib.pyplot as plt
 import numpy as np
+from labquake_explorer.analysis.event_drop_analyzer import _get_t_trig
+from labquake_explorer.utils.user_prefs import UserPrefs
 
 
 class ColoredLinesView(tk.Toplevel):
@@ -105,17 +107,56 @@ class ColoredLinesView(tk.Toplevel):
         # Entry for direct input
         self.sample_entry = ttk.Entry(ctrl_frame, width=6)
         self.sample_entry.grid(row=0, column=6, padx=5, pady=5)
-        self.sample_entry.insert(0, "500")
-        self.sample_entry.bind("<Return>", self._on_entry_change)
-        self.sample_entry.bind("<FocusOut>", self._on_entry_change)
+        # 讀取全域配置 (不再侷限於單一 HDF5)
+        saved_config = UserPrefs.get('ColoredLinesView', 'config', {})
+        if 'samples' in saved_config:
+            self.sample_var.set(saved_config['samples'])
+            self.sample_entry.delete(0, tk.END)
+            self.sample_entry.insert(0, str(saved_config['samples']))
+
+        # 讀取該實驗專屬的記憶 (HDF5 內部)，只用於記錄事件區間
+        local_config = {}
+        summary_config = {}
+        try:
+            run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
+            if isinstance(run_data, dict) and 'config' in run_data:
+                local_config = run_data['config'].get('colored_lines_config', {})
+                summary_config = run_data['config'].get('summary_config', {})
+        except Exception:
+            pass
 
         # Populate event dropdowns
-        n_events = len(self.events)
-        options = [str(i + 1) for i in range(n_events)]
+        options = []
+        for i in range(1, len(self.events)):
+            if _get_t_trig(self.events[i]) is not None:
+                options.append(str(i))
+        
         self.start_combo.config(values=options)
         self.end_combo.config(values=options)
-        self.start_combo.current(0)
-        self.end_combo.current(n_events - 1)
+        
+        if options:
+            # Fallback chain: local colored lines config -> summary config -> default
+            try:
+                def_start = int(options[0])
+                def_end = int(options[-1])
+            except (ValueError, IndexError):
+                def_start, def_end = 1, len(self.events) - 1
+
+            start_idx = local_config.get('start_idx', summary_config.get('start_idx', def_start))
+            end_idx = local_config.get('end_idx', summary_config.get('end_idx', def_end))
+            
+            # Map event ID to combobox index
+            try:
+                cb_start_idx = options.index(str(start_idx))
+            except ValueError:
+                cb_start_idx = 0
+            try:
+                cb_end_idx = options.index(str(end_idx))
+            except ValueError:
+                cb_end_idx = len(options) - 1
+                
+            self.start_combo.current(cb_start_idx)
+            self.end_combo.current(cb_end_idx)
 
         self.start_combo.bind("<<ComboboxSelected>>", self.update_plot)
         self.end_combo.bind("<<ComboboxSelected>>", self.update_plot)
@@ -209,18 +250,29 @@ class ColoredLinesView(tk.Toplevel):
             self.end_combo.current(end_idx)
 
         try:
-            t_start = self.events[start_idx]['event_time']
-            t_end   = self.events[end_idx]['event_time']
-        except (IndexError, KeyError):
+            t_start = _get_t_trig(self.events[start_idx])
+            t_end   = _get_t_trig(self.events[end_idx])
+            if t_start is None or t_end is None:
+                return
+        except IndexError:
             return
 
         t_all = self.time_history['time']
 
-        if t_start == t_end:
-            t_start -= 1.0
-            t_end   += 1.0
+        t_plot_start = t_start - 1.0
+        
+        # Extend end time so the last event's slip is not cut off
+        next_idx = end_idx + 1
+        t_next = None
+        if next_idx < len(self.events):
+            t_next = _get_t_trig(self.events[next_idx])
+            
+        if t_next is not None and not np.isnan(t_next):
+            t_plot_end = t_next
+        else:
+            t_plot_end = t_end + 5.0
 
-        mask   = (t_all >= t_start) & (t_all <= t_end)
+        mask   = (t_all >= t_plot_start) & (t_all <= t_plot_end)
         t_mask = t_all[mask]
 
         if len(t_mask) == 0:
@@ -272,7 +324,61 @@ class ColoredLinesView(tk.Toplevel):
 
         self.canvas.draw()
 
+    def _save_config(self):
+        """Save current UI state to the config in memory and globally."""
+        # Global config: samples density
+        global_config = {
+            'samples': self.sample_var.get(),
+        }
+        UserPrefs.set('ColoredLinesView', 'config', global_config)
+        
+        # Local config: Includes event indices
+        local_config = dict(global_config)
+        try:
+            local_config['start_idx'] = int(self.start_combo.get())
+            local_config['end_idx'] = int(self.end_combo.get())
+        except ValueError:
+            pass
+            
+        try:
+            run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
+            config = run_data.setdefault('config', {})
+            config['colored_lines_config'] = local_config
+        except Exception as e:
+            print(f"Warning: failed to save Colored Lines config in memory: {e}")
+
     def on_close(self):
+        try:
+            self._save_config()
+            # Persist summary config to HDF5 file using fast_save logic
+            run_data = self.data_manager.get_data(f"runs/[{self.run_idx}]")
+            if 'config' in run_data:
+                import h5py
+                data_path = self.data_manager.data_path
+                if data_path and data_path.exists() and data_path.suffix.lower() in ['.h5', '.hdf5']:
+                    with h5py.File(data_path, 'r+') as f:
+                        config_path = f"runs/{self.run_idx}/config"
+                        if config_path in f:
+                            del f[config_path]
+                        config_group = f.create_group(config_path)
+                        def recursive_save(group, d):
+                            for k, v in d.items():
+                                if isinstance(v, dict):
+                                    sub = group.create_group(k)
+                                    recursive_save(sub, v)
+                                elif isinstance(v, (list, tuple)):
+                                    arr = np.array(v)
+                                    if arr.dtype.kind == 'U':
+                                        arr = np.array([x.encode() for x in arr.flat]).reshape(arr.shape)
+                                    group.create_dataset(k, data=arr)
+                                elif isinstance(v, str):
+                                    group.create_dataset(k, data=v.encode())
+                                else:
+                                    group.create_dataset(k, data=v)
+                        recursive_save(config_group, run_data['config'])
+        except Exception as e:
+            print(f"Warning: failed to save Colored Lines config to HDF5: {e}")
+            
         if self.figure:
             plt.close(self.figure)
         self.destroy()

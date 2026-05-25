@@ -542,7 +542,7 @@ class LabquakeExplorer:
             row += 1
 
         ttk.Label(config_win, text="Skip events (comma-sep):").grid(row=row, column=0, padx=5, pady=3, sticky='w')
-        initial_skip = ",".join(map(str, cfg.get("skip_events", [])))
+        initial_skip = ",".join(map(str, [x for x in cfg.get("skip_events", []) if x != 0]))
         skip_var = tk.StringVar(value=initial_skip)
         ttk.Entry(config_win, textvariable=skip_var, width=60).grid(row=row, column=1, padx=5, pady=3)
         row += 1
@@ -605,7 +605,7 @@ class LabquakeExplorer:
                 except Exception:
                     pass
 
-                for i in range(len(events)):
+                for i in range(1, len(events)):
                     if i < start_ev or i > end_ev:
                         if i not in cfg['skip_events']:
                             cfg['skip_events'].append(i)
@@ -784,7 +784,7 @@ class LabquakeExplorer:
             row += 1
 
         ttk.Label(config_win, text="Skip events (comma-sep):").grid(row=row, column=0, padx=5, pady=3, sticky='w')
-        initial_skip = ",".join(map(str, cfg.get('skip_events', [])))
+        initial_skip = ",".join(map(str, [x for x in cfg.get("skip_events", []) if x != 0]))
         skip_var = tk.StringVar(value=initial_skip)
         ttk.Entry(config_win, textvariable=skip_var, width=60).grid(row=row, column=1, padx=5, pady=3)
         row += 1
@@ -858,7 +858,7 @@ class LabquakeExplorer:
                 except Exception:
                     pass
 
-                for i in range(len(events)):
+                for i in range(1, len(events)):
                     if i < start_ev or i > end_ev:
                         if i not in cfg['skip_events']:
                             cfg['skip_events'].append(i)

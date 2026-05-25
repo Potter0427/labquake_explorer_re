@@ -558,13 +558,11 @@ class EventDropEditorView(tk.Toplevel):
 
         r = self._result
         
-        # 移除畫圖用的殘差資料
-        for key in list(r.keys()):
-            if key.endswith('_res') or key == 'event_idx':
-                del r[key]
+        # 移除畫圖用的殘差資料, 但不要修改 r 本身以免影響後續繪圖
+        save_data = {key: val for key, val in r.items() if not key.endswith('_res') and key != 'event_idx'}
 
         # category=None 直接寫入根目錄，只覆寫 r 中有的項目
-        self.data_manager.fast_save_event_analysis(self.run_idx, self.event_idx, None, r)
+        self.data_manager.fast_save_event_analysis(self.run_idx, self.event_idx, None, save_data)
 
         # Overwrite Event Drop diagnostic plot if the directory exists
         import os

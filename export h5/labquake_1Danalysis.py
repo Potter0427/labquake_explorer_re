@@ -243,7 +243,7 @@ class LabQuakeAnalyzer:
             
             # --- 設定根目錄屬性 ---
             if 'name' not in f.keys():
-                f.create_dataset('name', data=f"{experiment_name}_{diameter}PC")
+                f.create_dataset('name', data=f"{experiment_name}_{diameter}P")
             
             # --- 建立或獲取 runs 資料夾 ---
             if "runs" not in f:

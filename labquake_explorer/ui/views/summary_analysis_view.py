@@ -280,8 +280,8 @@ class SummaryAnalysisView(tk.Toplevel):
             if t_start <= tr_time <= t_end_ext:
                 tr = tr_time - t_offset
                 ax.axvline(x=tr, color='gray', linestyle=':', alpha=0.3, linewidth=0.8)
-                if add_text and (i + 1) % 3 == 0:
-                    ax.text(tr, 1.01, str(i + 1), transform=ax.get_xaxis_transform(),
+                if add_text and i > 0 and i % 3 == 0:
+                    ax.text(tr, 1.01, str(i), transform=ax.get_xaxis_transform(),
                             fontsize=9, color='dimgray', ha='center', va='bottom')
 
     def update_plot(self, event=None):
@@ -305,11 +305,19 @@ class SummaryAnalysisView(tk.Toplevel):
             return
 
         t_all = self.time_history['time']
-        if t_start == t_end:
-            t_start -= 1.0
-            t_end += 1.0
+        
+        t_plot_start = t_start - 1.0
+        if end_idx + 1 < len(self.events):
+            t_next = self._get_event_time(end_idx + 1)
+            t_plot_end = t_next if not np.isnan(t_next) else t_end + 5.0
+        else:
+            t_plot_end = t_end + 5.0
+            
+        if t_plot_start >= t_plot_end:
+            t_plot_start = t_start - 1.0
+            t_plot_end = t_start + 1.0
 
-        mask = (t_all >= t_start) & (t_all <= t_end)
+        mask = (t_all >= t_plot_start) & (t_all <= t_plot_end)
         t_mask = t_all[mask]
         if len(t_mask) == 0:
             return
@@ -342,7 +350,7 @@ class SummaryAnalysisView(tk.Toplevel):
             valid_mask[0] = False
             
             # Mask by valid trigger times within the current viewport range
-            range_mask = valid_mask & ~np.isnan(trigs) & (trigs >= t_start - 1) & (trigs <= t_end + 1)
+            range_mask = valid_mask & ~np.isnan(trigs) & (trigs >= t_plot_start - 1) & (trigs <= t_plot_end + 1)
             
             # 檢查 skipped
             if 'skipped' in self.results:
@@ -372,8 +380,7 @@ class SummaryAnalysisView(tk.Toplevel):
                 ax.plot(t_plot, e_0, label=f'E{i+1}', alpha=0.7)
             ax.set_ylabel('slip [μm]')
             ax.legend(bbox_to_anchor=(1.01, 1), loc='upper left', fontsize='small', handletextpad=1.5, borderaxespad=1.0)
-            self._add_trigger_lines(ax, t_start, t_end, t_offset, add_text=(active[0]=='slip'))
-
+            self._add_trigger_lines(ax, t_plot_start, t_plot_end, t_offset, add_text=(active[0]=='slip'))
         # --- (2) Mu ---
         if 'mu' in self.axs_map:
             ax = self.axs_map['mu']
@@ -388,7 +395,7 @@ class SummaryAnalysisView(tk.Toplevel):
                     mu_sm = np.pad(mu_sm, (0, len(t_plot) - len(mu_sm)), 'edge')
                 ax.plot(t_plot, mu_sm, 'k')
             ax.set_ylabel(r'$\mu$')
-            self._add_trigger_lines(ax, t_start, t_end, t_offset, add_text=(active[0]=='mu'))
+            self._add_trigger_lines(ax, t_plot_start, t_plot_end, t_offset, add_text=(active[0]=='mu'))
 
         # --- (3) Delta Tau ---
         if 'delta_tau' in self.axs_map:
@@ -401,7 +408,7 @@ class SummaryAnalysisView(tk.Toplevel):
                 ax.text(0.5, 0.5, 'Run "Run Drop Analysis" first',
                         ha='center', va='center', transform=ax.transAxes, color='gray')
             ax.set_ylabel(r'$\Delta\tau$ [MPa]')
-            self._add_trigger_lines(ax, t_start, t_end, t_offset, add_text=(active[0]=='delta_tau'))
+            self._add_trigger_lines(ax, t_plot_start, t_plot_end, t_offset, add_text=(active[0]=='delta_tau'))
 
         # --- (4) Delta Slip ---
         if 'delta_slip' in self.axs_map:
@@ -419,7 +426,7 @@ class SummaryAnalysisView(tk.Toplevel):
                 ax.text(0.5, 0.5, 'Run "Run Drop Analysis" first',
                         ha='center', va='center', transform=ax.transAxes, color='gray')
             ax.set_ylabel(r'$\delta$ [μm]')
-            self._add_trigger_lines(ax, t_start, t_end, t_offset, add_text=(active[0]=='delta_slip'))
+            self._add_trigger_lines(ax, t_plot_start, t_plot_end, t_offset, add_text=(active[0]=='delta_slip'))
 
         # --- (5) Delta LVDT ---
         if 'delta_lvdt' in self.axs_map:
@@ -432,7 +439,7 @@ class SummaryAnalysisView(tk.Toplevel):
                 ax.text(0.5, 0.5, 'Run "Run Drop Analysis" first',
                         ha='center', va='center', transform=ax.transAxes, color='gray')
             ax.set_ylabel(r'$\Delta$ LVDT [μm]')
-            self._add_trigger_lines(ax, t_start, t_end, t_offset, add_text=(active[0]=='delta_lvdt'))
+            self._add_trigger_lines(ax, t_plot_start, t_plot_end, t_offset, add_text=(active[0]=='delta_lvdt'))
 
         # --- (6) D values ---
         if 'd_values' in self.axs_map:
@@ -457,7 +464,7 @@ class SummaryAnalysisView(tk.Toplevel):
             else:
                 ax.legend(bbox_to_anchor=(1.01, 1), loc='upper left', fontsize='small', handletextpad=1.5, borderaxespad=1.0)
             ax.set_ylabel(r'D [μm]')
-            self._add_trigger_lines(ax, t_start, t_end, t_offset, add_text=(active[0]=='d_values'))
+            self._add_trigger_lines(ax, t_plot_start, t_plot_end, t_offset, add_text=(active[0]=='d_values'))
 
         # --- (7) Stiffness k ---
         if 'stiffness' in self.axs_map:
@@ -474,7 +481,7 @@ class SummaryAnalysisView(tk.Toplevel):
                 ax.text(0.5, 0.5, 'Run "Run K Analysis" first',
                         ha='center', va='center', transform=ax.transAxes, color='gray')
             ax.set_ylabel('k [MPa/μm]')
-            self._add_trigger_lines(ax, t_start, t_end, t_offset, add_text=(active[0]=='stiffness'))
+            self._add_trigger_lines(ax, t_plot_start, t_plot_end, t_offset, add_text=(active[0]=='stiffness'))
 
         # --- (8) Eddy - LVDT ---
         if 'eddy_lvdt' in self.axs_map:
@@ -496,7 +503,7 @@ class SummaryAnalysisView(tk.Toplevel):
                     diff = e_0 - lvdt_0
                     ax.plot(t_plot, diff, f'C{i}', alpha=0.7)
             ax.set_ylabel('Eddy-LVDT [μm]')
-            self._add_trigger_lines(ax, t_start, t_end, t_offset, add_text=(active[0]=='eddy_lvdt'))
+            self._add_trigger_lines(ax, t_plot_start, t_plot_end, t_offset, add_text=(active[0]=='eddy_lvdt'))
 
         # --- (8) Slip Rate ---
         if 'slip_rate' in self.axs_map:
@@ -519,7 +526,7 @@ class SummaryAnalysisView(tk.Toplevel):
                 if t_rate_key in self.time_history and rate_key in self.time_history:
                     t_sr = self.time_history[t_rate_key]
                     r_sr = self.time_history[rate_key]
-                    sr_mask = (t_sr >= t_start) & (t_sr <= t_end)
+                    sr_mask = (t_sr >= t_plot_start) & (t_sr <= t_plot_end)
                     if np.sum(sr_mask) > 0:
                         all_t_parts.append(t_sr[sr_mask] - t_offset)
                         all_r_parts.append(r_sr[sr_mask])
@@ -541,7 +548,7 @@ class SummaryAnalysisView(tk.Toplevel):
                     if t_hr is None:
                         break
                         
-                    hr_mask = (t_hr >= t_start) & (t_hr <= t_end)
+                    hr_mask = (t_hr >= t_plot_start) & (t_hr <= t_plot_end)
                     if np.sum(hr_mask) > 0:
                         all_t_parts.append(t_hr[hr_mask] - t_offset)
                         all_r_parts.append(r_hr[hr_mask])
@@ -553,12 +560,12 @@ class SummaryAnalysisView(tk.Toplevel):
                     idx_sort = np.argsort(combined_t)
                     # Plot with very thin line to keep background and spikes distinguishable
                     ax.plot(combined_t[idx_sort], combined_r[idx_sort], 
-                            color=f'C{i}', alpha=0.7, linewidth=0.5)
+                            color=f'C{i}', alpha=0.7)
                     has_data = True
             
             ax.set_yscale('log')
             ax.set_ylabel('Rate [\u03bcm/s]')
-            self._add_trigger_lines(ax, t_start, t_end, t_offset, add_text=(active[0]=='slip_rate'))
+            self._add_trigger_lines(ax, t_plot_start, t_plot_end, t_offset, add_text=(active[0]=='slip_rate'))
 
         # --- (9) Heatmap ---
         if 'heatmap' in self.axs_map:
@@ -584,20 +591,28 @@ class SummaryAnalysisView(tk.Toplevel):
                         
                         t_sr = self.time_history[t_rate_key]
                         r_sr = self.time_history[rate_key]
-                        sr_mask = (t_sr >= t_start) & (t_sr <= t_end)
+                        sr_mask = (t_sr >= t_plot_start) & (t_sr <= t_plot_end)
                         if np.sum(sr_mask) > 0:
                             all_t_parts.append(t_sr[sr_mask] - t_offset)
                             all_r_parts.append(r_sr[sr_mask])
                         
+                        hr_group = self.time_history.get('high_rate_sliprates', {})
                         blk_idx = 2
                         while True:
                             hr_t_key = f't_high_sliprate_ch{ch_num}_blk{blk_idx}'
                             hr_r_key = f'high_sliprate_ch{ch_num}_blk{blk_idx}'
-                            if hr_t_key not in self.time_history:
+                            
+                            t_hr = hr_group.get(hr_t_key) if isinstance(hr_group, dict) else hr_group.get(hr_t_key)
+                            r_hr = hr_group.get(hr_r_key) if isinstance(hr_group, dict) else hr_group.get(hr_r_key)
+                            
+                            if t_hr is None:
+                                t_hr = self.time_history.get(hr_t_key)
+                                r_hr = self.time_history.get(hr_r_key)
+                                
+                            if t_hr is None:
                                 break
-                            t_hr = self.time_history[hr_t_key]
-                            r_hr = self.time_history[hr_r_key]
-                            hr_mask = (t_hr >= t_start) & (t_hr <= t_end)
+                                
+                            hr_mask = (t_hr >= t_plot_start) & (t_hr <= t_plot_end)
                             if np.sum(hr_mask) > 0:
                                 all_t_parts.append(t_hr[hr_mask] - t_offset)
                                 all_r_parts.append(r_hr[hr_mask])
@@ -625,7 +640,7 @@ class SummaryAnalysisView(tk.Toplevel):
                 ax.set_yticks(positions)
                 ax.set_ylabel('Distance [mm]')
             
-            self._add_trigger_lines(ax, t_start, t_end, t_offset, add_text=(active[0]=='heatmap'))
+            self._add_trigger_lines(ax, t_plot_start, t_plot_end, t_offset, add_text=(active[0]=='heatmap'))
 
         # X label on bottom
         if active:
