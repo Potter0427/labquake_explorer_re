@@ -65,6 +65,7 @@ class EventDropEditorView(tk.Toplevel):
             return
 
         self._is_1d = bool(self.time_history.get('is_1d', False))
+        self._eddy_keys = sorted([k for k in self.time_history.keys() if 'eddy' in k.lower()])
 
         if self.event_idx >= len(self.events):
             messagebox.showerror("Error", f"Event {self.event_idx} out of range")
@@ -110,20 +111,29 @@ class EventDropEditorView(tk.Toplevel):
         self.event_combo.bind("<<ComboboxSelected>>", self._on_event_change)
         ttk.Button(ctrl, text="Next >", command=self._go_next).grid(row=0, column=3, padx=2)
 
+        ttk.Label(ctrl, text="Slip Sensor:").grid(row=0, column=4, padx=(10, 2))
+        self.sensor_combo = ttk.Combobox(ctrl, state="readonly", width=8)
+        self.sensor_combo.grid(row=0, column=5, padx=2)
+        if self._eddy_keys:
+            self.sensor_combo['values'] = [f"E{i+1}" for i in range(len(self._eddy_keys))]
+            default_idx = 2 if len(self._eddy_keys) >= 3 else 0
+            self.sensor_combo.current(default_idx)
+        self.sensor_combo.bind("<<ComboboxSelected>>", self._on_sensor_change)
+
         # Status Label
         self.status_label = ttk.Label(ctrl, text="", font=("TkDefaultFont", 10, "bold"))
-        self.status_label.grid(row=0, column=4, padx=10)
+        self.status_label.grid(row=0, column=6, padx=10)
 
-        ttk.Label(ctrl, text="Drag the 4 vertical lines on each plot to set the 2 pre-drop and 2 post-drop points.").grid(row=0, column=5, padx=15, sticky='w')
+        ttk.Label(ctrl, text="Drag the 4 vertical lines on each plot to set the 2 pre-drop and 2 post-drop points.").grid(row=0, column=7, padx=15, sticky='w')
 
         ttk.Button(ctrl, text="Recompute", command=self._recompute_preview).grid(
-            row=0, column=6, padx=5
+            row=0, column=8, padx=5
         )
         ttk.Button(ctrl, text="Apply & Save", command=self._apply_and_save).grid(
-            row=0, column=7, padx=5
+            row=0, column=9, padx=5
         )
         ttk.Button(ctrl, text="Delete Event", command=self._delete_event).grid(
-            row=0, column=8, padx=5
+            row=0, column=10, padx=5
         )
 
         # Build figure once – Canvas is never destroyed after this point
@@ -142,6 +152,11 @@ class EventDropEditorView(tk.Toplevel):
         # Redraw static layer for the new event, then recompute dynamic layer
         self._draw_static(self.config)
         self._recompute()
+
+    def _on_sensor_change(self, event=None):
+        # Just redraw the dynamic layer using the currently cached result
+        if hasattr(self, '_result') and self._result is not None:
+            self._draw_dynamic(self._result, self.config)
 
     def _go_prev(self):
         valid_indices = [i for i in range(1, len(self.events))]
@@ -305,12 +320,10 @@ class EventDropEditorView(tk.Toplevel):
         self.ax1.grid(True)
 
         # ---- (2) Slip ----
-        eddy_keys = sorted([k for k in self.time_history.keys() if 'eddy' in k.lower()])
         eddy_colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple',
                        'tab:brown', 'tab:pink', 'tab:gray', 'tab:olive', 'tab:cyan']
-        self._eddy_keys = eddy_keys  # cache for dynamic layer
 
-        for i, k in enumerate(eddy_keys):
+        for i, k in enumerate(self._eddy_keys):
             d = self.time_history[k][mask] - self.time_history[k][mask][0]
             color = eddy_colors[i % len(eddy_colors)]
             self.ax2.plot(t_rel, d, alpha=0.8, label=f'E{i+1}', color=color)
@@ -415,7 +428,7 @@ class EventDropEditorView(tk.Toplevel):
         # ---- Slip vlines + fit ----
         eddy_colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple',
                        'tab:brown', 'tab:pink', 'tab:gray', 'tab:olive', 'tab:cyan']
-        target_idx = 2 if len(self._eddy_keys) >= 3 else (0 if self._eddy_keys else -1)
+        target_idx = self.sensor_combo.current() if self._eddy_keys else -1
         for i, line in enumerate(self._vlines['slip']):
             line.set_xdata([self.pts['slip'][i], self.pts['slip'][i]])
         if target_idx >= 0:
