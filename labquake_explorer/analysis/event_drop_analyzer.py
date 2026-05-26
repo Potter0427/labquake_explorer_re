@@ -277,18 +277,18 @@ def analyze_single_event(
         row[f'delta_E{i+1}_res'] = res_slip
 
     # --- delta_lvdt ---
-    lvdt_raw = time_history['LP_displacement'][mask]
-    lvdt_sm = moving_average(lvdt_raw, config.get('lvdt_smooth_w', 100))
-    if len(lvdt_sm) < len(t_rel):
-        lvdt_sm = np.pad(lvdt_sm, (0, len(t_rel) - len(lvdt_sm)), 'edge')
-    lvdt_0 = lvdt_sm - lvdt_sm[0]
-
-    res_lvdt = calculate_2pt_trend_drop(t_rel, lvdt_0, lvdt_pts)
-    row['lvdt']['value'] = abs(res_lvdt['delta']) if res_lvdt['valid'] else np.nan
-    row['lvdt_res'] = res_lvdt
-
-    # --- D values ---
     is_1d = time_history.get('is_1d', False)
+
+    if not is_1d:
+        lvdt_raw = time_history['LP_displacement'][mask]
+        lvdt_sm = moving_average(lvdt_raw, config.get('lvdt_smooth_w', 100))
+        if len(lvdt_sm) < len(t_rel):
+            lvdt_sm = np.pad(lvdt_sm, (0, len(t_rel) - len(lvdt_sm)), 'edge')
+        lvdt_0 = lvdt_sm - lvdt_sm[0]
+
+        res_lvdt = calculate_2pt_trend_drop(t_rel, lvdt_0, lvdt_pts)
+        row['lvdt']['value'] = abs(res_lvdt['delta']) if res_lvdt['valid'] else np.nan
+        row['lvdt_res'] = res_lvdt
 
     if not is_1d:
         push_speed = config.get('push_speed', 3.508)

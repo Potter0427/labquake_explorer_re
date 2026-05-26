@@ -248,6 +248,14 @@ class EventKEditorView(tk.Toplevel):
                         val = event_k['end']
                         if hasattr(val, 'item'): val = val.item()
                         self.config['k_pre_end'] = val
+                    if 'use_ransac' in event_k:
+                        self.config['k_use_ransac'] = bool(event_k['use_ransac'])
+                    if 'smooth_w' in event_k:
+                        self.config['k_smooth_w'] = int(event_k['smooth_w'])
+                    if 'highpass_freq' in event_k:
+                        self.config['k_highpass_freq'] = float(event_k['highpass_freq'])
+                    if 'lowpass_freq' in event_k:
+                        self.config['k_lowpass_freq'] = float(event_k['lowpass_freq'])
         except Exception:
             pass
 

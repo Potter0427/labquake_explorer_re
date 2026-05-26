@@ -761,7 +761,7 @@ class LabquakeExplorer:
                         
                     for k in ['k_pre_start', 'k_pre_end', 'k_window_sec', 'k_highpass_freq', 'k_lowpass_freq']:
                         if k in old_cfg: cfg[k] = float(old_cfg[k])
-                    if 'k_smooth_w' in old_cfg: cfg['k_smooth_w'] = int(old_cfg[k])
+                    if 'k_smooth_w' in old_cfg: cfg['k_smooth_w'] = int(old_cfg['k_smooth_w'])
                     if 'k_use_ransac' in old_cfg: cfg['k_use_ransac'] = bool(old_cfg['k_use_ransac'])
         except Exception:
             pass
