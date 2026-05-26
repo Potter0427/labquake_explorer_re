@@ -655,13 +655,21 @@ class EventKEditorView(tk.Toplevel):
         hp_freq = cfg.get('k_highpass_freq', 0.0)
         lp_freq = cfg.get('k_lowpass_freq', 0.0)
         half_win = max(cfg.get('k_window_sec', 3.5), abs(k_pre_start) + 0.5)
-        new_key = (self.event_idx, w, hp_freq, lp_freq, half_win)
+        signal_key = (self.event_idx, w, hp_freq, lp_freq, half_win)
 
-        static_needs_redraw = new_key not in self._signal_cache
+        # _draw_static also depends on k_pre_start (disp_mask / t_disp_start).
+        # Use a separate draw_key so that changing pre_start within the same
+        # half_win range (e.g., -2 → -3 both yield half_win=3.5) still
+        # triggers a static redraw and avoids the blank-region bug.
+        draw_key = (self.event_idx, w, hp_freq, lp_freq, half_win, k_pre_start)
+        static_needs_redraw = (signal_key not in self._signal_cache or
+                               draw_key != getattr(self, '_last_draw_key', None))
 
         if static_needs_redraw:
             # Invalidate stale cache entries before _draw_static refills it
-            self._signal_cache.clear()
+            if signal_key not in self._signal_cache:
+                self._signal_cache.clear()
+            self._last_draw_key = draw_key
             self._draw_static(cfg)
 
         result = analyze_single_k(

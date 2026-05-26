@@ -29,6 +29,7 @@ import numpy as np
 
 from labquake_explorer.analysis.event_drop_analyzer import (
     analyze_single_event,
+    compute_half_win,
     moving_average,
     _get_t_trig,
     DEFAULT_CONFIG,
@@ -62,6 +63,8 @@ class EventDropEditorView(tk.Toplevel):
             messagebox.showerror("Error", "Cannot load time history or events")
             self.destroy()
             return
+
+        self._is_1d = bool(self.time_history.get('is_1d', False))
 
         if self.event_idx >= len(self.events):
             messagebox.showerror("Error", f"Event {self.event_idx} out of range")
@@ -228,14 +231,22 @@ class EventDropEditorView(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _build_figure(self):
-        self.figure = Figure(figsize=(10, 10), dpi=100)
-        gs = self.figure.add_gridspec(3, 1, height_ratios=[1.2, 1.5, 1.5], hspace=0.15)
-        self.ax1 = self.figure.add_subplot(gs[0])
-        self.ax2 = self.figure.add_subplot(gs[1], sharex=self.ax1)
-        self.ax3 = self.figure.add_subplot(gs[2], sharex=self.ax1)
-
-        self.ax_map = {'tau': self.ax1, 'slip': self.ax2, 'lvdt': self.ax3}
-        self.ax_inv_map = {self.ax1: 'tau', self.ax2: 'slip', self.ax3: 'lvdt'}
+        if self._is_1d:
+            self.figure = Figure(figsize=(10, 7), dpi=100)
+            gs = self.figure.add_gridspec(2, 1, height_ratios=[1.2, 1.5], hspace=0.15)
+            self.ax1 = self.figure.add_subplot(gs[0])
+            self.ax2 = self.figure.add_subplot(gs[1], sharex=self.ax1)
+            self.ax3 = None
+            self.ax_map = {'tau': self.ax1, 'slip': self.ax2}
+            self.ax_inv_map = {self.ax1: 'tau', self.ax2: 'slip'}
+        else:
+            self.figure = Figure(figsize=(10, 10), dpi=100)
+            gs = self.figure.add_gridspec(3, 1, height_ratios=[1.2, 1.5, 1.5], hspace=0.15)
+            self.ax1 = self.figure.add_subplot(gs[0])
+            self.ax2 = self.figure.add_subplot(gs[1], sharex=self.ax1)
+            self.ax3 = self.figure.add_subplot(gs[2], sharex=self.ax1)
+            self.ax_map = {'tau': self.ax1, 'slip': self.ax2, 'lvdt': self.ax3}
+            self.ax_inv_map = {self.ax1: 'tau', self.ax2: 'slip', self.ax3: 'lvdt'}
 
         self.canvas = FigureCanvasTkAgg(self.figure, master=self)
         self.canvas.get_tk_widget().grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
@@ -261,7 +272,7 @@ class EventDropEditorView(tk.Toplevel):
         t_trig = _get_t_trig(ev)
         if t_trig is None:
             return
-        half_win = config.get('window_sec', 1.5)
+        half_win = compute_half_win(config)
         t_all = self.time_history['time']
         mask = (t_all >= t_trig - half_win) & (t_all <= t_trig + half_win)
         t_rel = t_all[mask] - t_trig
@@ -270,7 +281,10 @@ class EventDropEditorView(tk.Toplevel):
             return
 
         # Clear all axes
-        for ax in [self.ax1, self.ax2, self.ax3]:
+        all_axes = [self.ax1, self.ax2]
+        if self.ax3 is not None:
+            all_axes.append(self.ax3)
+        for ax in all_axes:
             ax.clear()
 
         # Reset dynamic Artist references
@@ -305,23 +319,31 @@ class EventDropEditorView(tk.Toplevel):
         self.ax2.legend(loc='upper left', fontsize='small')
         self.ax2.grid(True)
 
-        # ---- (3) LVDT ----
-        lvdt_raw = self.time_history['LP_displacement'][mask]
-        lvdt_sm = moving_average(lvdt_raw, config.get('lvdt_smooth_w', 100))
-        if len(lvdt_sm) < len(t_rel):
-            lvdt_sm = np.pad(lvdt_sm, (0, len(t_rel) - len(lvdt_sm)), 'edge')
-        self._lvdt_0 = lvdt_sm - lvdt_sm[0]  # cache for dynamic layer
+        # ---- (3) LVDT (skip for 1D) ----
+        if not self._is_1d and self.ax3 is not None:
+            lvdt_raw = self.time_history['LP_displacement'][mask]
+            lvdt_sm = moving_average(lvdt_raw, config.get('lvdt_smooth_w', 100))
+            if len(lvdt_sm) < len(t_rel):
+                lvdt_sm = np.pad(lvdt_sm, (0, len(t_rel) - len(lvdt_sm)), 'edge')
+            self._lvdt_0 = lvdt_sm - lvdt_sm[0]  # cache for dynamic layer
 
-        self.ax3.plot(t_rel, self._lvdt_0, alpha=0.7, color='slategrey')
-        self.ax3.set_xlabel('time relative [s]')
-        self.ax3.set_ylabel('LVDT slip [μm]')
-        self.ax3.grid(True)
+            self.ax3.plot(t_rel, self._lvdt_0, alpha=0.7, color='slategrey')
+            self.ax3.set_xlabel('time relative [s]')
+            self.ax3.set_ylabel('LVDT slip [μm]')
+            self.ax3.grid(True)
+        else:
+            self._lvdt_0 = None
+            self.ax2.set_xlabel('time relative [s]')
 
         # ---- Draw draggable vlines (initially at pts positions) ----
         colors = ['blue', 'blue', 'red', 'red']
         styles = ['--', '-', '-', '--']
-        self._vlines = {'tau': [], 'slip': [], 'lvdt': []}
-        for ax_name, ax in [('tau', self.ax1), ('slip', self.ax2), ('lvdt', self.ax3)]:
+        self._vlines = {'tau': [], 'slip': []}
+        vline_axes = [('tau', self.ax1), ('slip', self.ax2)]
+        if not self._is_1d and self.ax3 is not None:
+            self._vlines['lvdt'] = []
+            vline_axes.append(('lvdt', self.ax3))
+        for ax_name, ax in vline_axes:
             for i in range(4):
                 line = ax.axvline(x=self.pts[ax_name][i], color=colors[i],
                                   linestyle=styles[i], alpha=0.6, lw=1.5,
@@ -412,21 +434,22 @@ class EventDropEditorView(tk.Toplevel):
                                     color=slip_color, fontweight='bold', fontsize=10)
                 self._annotations.extend([ann, txt])
 
-        # ---- LVDT vlines + fit ----
-        lvdt_res = result.get('lvdt_res', {})
-        for i, line in enumerate(self._vlines['lvdt']):
-            line.set_xdata([self.pts['lvdt'][i], self.pts['lvdt'][i]])
-        _add_fit_lines(self.ax3, self.pts['lvdt'], lvdt_res, 'darkslateblue')
-        if lvdt_res.get('valid'):
-            val = abs(lvdt_res['delta'])
-            ann = self.ax3.annotate('', xy=(0, lvdt_res['val_post_0']),
-                                    xytext=(0, lvdt_res['val_pre_0']),
-                                    arrowprops=dict(arrowstyle='<->', color='darkslateblue', lw=2.5))
-            txt = self.ax3.text(0.1, (lvdt_res['val_pre_0'] + lvdt_res['val_post_0']) / 2,
-                                fr"$\boldsymbol{{\delta}}_{{\boldsymbol{{LVDT}}}}$=$\boldsymbol{{{val:.1f}}}$ $\boldsymbol{{\mu m}}$",
-                                ha='left', va='center',
-                                color='darkslateblue', fontweight='bold', fontsize=10)
-            self._annotations.extend([ann, txt])
+        # ---- LVDT vlines + fit (skip for 1D) ----
+        if not self._is_1d and self.ax3 is not None and 'lvdt' in self._vlines:
+            lvdt_res = result.get('lvdt_res', {})
+            for i, line in enumerate(self._vlines['lvdt']):
+                line.set_xdata([self.pts['lvdt'][i], self.pts['lvdt'][i]])
+            _add_fit_lines(self.ax3, self.pts['lvdt'], lvdt_res, 'darkslateblue')
+            if lvdt_res.get('valid'):
+                val = abs(lvdt_res['delta'])
+                ann = self.ax3.annotate('', xy=(0, lvdt_res['val_post_0']),
+                                        xytext=(0, lvdt_res['val_pre_0']),
+                                        arrowprops=dict(arrowstyle='<->', color='darkslateblue', lw=2.5))
+                txt = self.ax3.text(0.1, (lvdt_res['val_pre_0'] + lvdt_res['val_post_0']) / 2,
+                                    fr"$\boldsymbol{{\delta}}_{{\boldsymbol{{LVDT}}}}$=$\boldsymbol{{{val:.1f}}}$ $\boldsymbol{{\mu m}}$",
+                                    ha='left', va='center',
+                                    color='darkslateblue', fontweight='bold', fontsize=10)
+                self._annotations.extend([ann, txt])
 
         self._update_status_label()
 

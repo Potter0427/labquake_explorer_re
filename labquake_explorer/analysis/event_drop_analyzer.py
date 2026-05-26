@@ -4,6 +4,7 @@ Event Drop Analyzer – compute delta_tau, delta_slip, delta_lvdt, and D values.
 Ported from taudrop_check_4.py logic. Pure computation module with no UI
 dependencies.
 """
+import math
 import numpy as np
 from typing import Dict, List, Optional, Tuple, Any
 
@@ -21,6 +22,22 @@ def moving_average(x, w, pad_mode='reflect'):
     xpad = np.pad(x, (r, w - 1 - r), mode=pad_mode)
     k = np.ones(w, dtype=float) / w
     return np.convolve(xpad, k, mode='valid')
+
+
+def compute_half_win(config: dict) -> float:
+    """Compute the half-window for data extraction around each trigger.
+
+    The total span (2 * half_win) is rounded up to the nearest multiple of 6
+    so that the diagnostic-plot arrows (full-span and 1/6-span) always have
+    clean integer labels.
+    """
+    half_win = config.get('window_sec', 1.5)
+    pre_win = config.get('pre_win', (-1.0, -0.5))
+    post_win = config.get('post_win', (0.5, 1.0))
+    base = max(abs(pre_win[0]), abs(post_win[1]))
+    # Round up so that total span = 2*half_win is a multiple of 6
+    min_half = math.ceil(2 * base / 6) * 3
+    return max(half_win, min_half)
 
 
 def calculate_2pt_trend_drop(
@@ -198,7 +215,7 @@ def analyze_single_event(
     """
     tau_pts, slip_pts, lvdt_pts = _get_event_windows(event_idx, config)
     skip_list = config.get('skip_events', [])
-    half_win = config.get('window_sec', 1.5)
+    half_win = compute_half_win(config)
 
     eddy_keys = sorted([k for k in time_history.keys() if 'eddy' in k.lower()])
     

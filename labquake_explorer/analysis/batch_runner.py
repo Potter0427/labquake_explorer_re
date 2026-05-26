@@ -10,6 +10,7 @@ from typing import Dict, List, Any, Optional
 from labquake_explorer.analysis.event_drop_analyzer import (
     analyze_all_events,
     analyze_single_event,
+    compute_half_win,
     moving_average,
     _get_t_trig,
     _get_event_windows,
@@ -32,8 +33,9 @@ def generate_diagnostic_plot(
     t_trig = _get_t_trig(ev)
     if t_trig is None:
         return
-    half_win = config.get('window_sec', 1.5)
+    half_win = compute_half_win(config)
     t_all = time_history['time']
+    is_1d = time_history.get('is_1d', False)
 
     mask = (t_all >= t_trig - half_win) & (t_all <= t_trig + half_win)
     t_rel = t_all[mask] - t_trig
@@ -44,10 +46,28 @@ def generate_diagnostic_plot(
     # Use the 4-point windows from analyzer
     tau_pts, slip_pts, lvdt_pts = _get_event_windows(event_idx, config)
 
-    fig, (ax1, ax2, ax3) = plt.subplots(
-        3, 1, figsize=(10, 10), sharex=True,
-        gridspec_kw={'height_ratios': [1.2, 1.5, 1.5]}
-    )
+    # Dynamic delta-arrow offsets based on half_win
+    # Orange = full window span, Green = 1/6 of that
+    wide_offset = half_win
+    narrow_offset = half_win / 6.0
+    wide_span = 2 * wide_offset
+    narrow_span = 2 * narrow_offset
+    # Format labels: drop unnecessary trailing zeros
+    wide_label = f"{wide_span:g}"
+    narrow_label = f"{narrow_span:g}"
+
+    # Build figure: 2 subplots for 1D, 3 for non-1D
+    if is_1d:
+        fig, (ax1, ax2) = plt.subplots(
+            2, 1, figsize=(10, 7), sharex=True,
+            gridspec_kw={'height_ratios': [1.2, 1.5]}
+        )
+        ax3 = None
+    else:
+        fig, (ax1, ax2, ax3) = plt.subplots(
+            3, 1, figsize=(10, 10), sharex=True,
+            gridspec_kw={'height_ratios': [1.2, 1.5, 1.5]}
+        )
 
     # Helper for drawing trend lines
     def _draw_trend_lines(ax, pts, res, color):
@@ -59,7 +79,7 @@ def generate_diagnostic_plot(
         t_post = np.linspace(0, pts[3], 50)
         ax.plot(t_post, res['coeff_post'][0]*t_post + res['coeff_post'][1], '--', color=color, alpha=0.7, lw=1.5)
 
-    # Helper for drawing delta arrows (tau3, tau0.5)
+    # Helper for drawing delta arrows
     def _add_window_delta(ax, t_arr, y_arr, offset, color, lbl, symbol='\\tau'):
         try:
             i_n = np.argmin(np.abs(t_arr - (-offset)))
@@ -97,9 +117,9 @@ def generate_diagnostic_plot(
         _plot_arrow(ax1, 0, tau_res['val_pre_0'], tau_res['val_post_0'],
                     'darkslateblue', label, ha='right')
 
-    # Add specific window deltas
-    _add_window_delta(ax1, t_rel, tau_sm, 1.5, 'orange', '3', symbol='\\tau')
-    _add_window_delta(ax1, t_rel, tau_sm, 0.25, 'green', '0.5', symbol='\\tau')
+    # Add dynamic window deltas
+    _add_window_delta(ax1, t_rel, tau_sm, wide_offset, 'orange', wide_label, symbol='\\tau')
+    _add_window_delta(ax1, t_rel, tau_sm, narrow_offset, 'green', narrow_label, symbol='\\tau')
 
     ax1.set_ylabel(r'rel. $\tau$ [MPa]')
     ax1.set_title(f"Event {event_idx}")
@@ -129,33 +149,37 @@ def generate_diagnostic_plot(
             _plot_arrow(ax2, 0, res_slip['val_pre_0'], res_slip['val_post_0'],
                         'darkslateblue', arr_label, ha='right')
             
-            # Add specific window deltas for E3
-            _add_window_delta(ax2, t_rel, d, 1.5, 'orange', '3', symbol='\\delta')
-            _add_window_delta(ax2, t_rel, d, 0.25, 'green', '0.5', symbol='\\delta')
+            # Add dynamic window deltas for E3
+            _add_window_delta(ax2, t_rel, d, wide_offset, 'orange', wide_label, symbol='\\delta')
+            _add_window_delta(ax2, t_rel, d, narrow_offset, 'green', narrow_label, symbol='\\delta')
 
     ax2.set_ylabel('rel. slip [\u03bcm]')
     ax2.legend(loc='upper left', fontsize='small')
     ax2.grid(True)
 
-    # --- (3) LVDT ---
-    lvdt_raw = time_history['LP_displacement'][mask]
-    lvdt_sm = moving_average(lvdt_raw, config.get('lvdt_smooth_w', 100))
-    if len(lvdt_sm) < len(t_rel):
-        lvdt_sm = np.pad(lvdt_sm, (0, len(t_rel) - len(lvdt_sm)), 'edge')
-    lvdt_0 = lvdt_sm - lvdt_sm[0]
+    # --- (3) LVDT (skip for 1D) ---
+    if not is_1d and ax3 is not None:
+        lvdt_raw = time_history['LP_displacement'][mask]
+        lvdt_sm = moving_average(lvdt_raw, config.get('lvdt_smooth_w', 100))
+        if len(lvdt_sm) < len(t_rel):
+            lvdt_sm = np.pad(lvdt_sm, (0, len(t_rel) - len(lvdt_sm)), 'edge')
+        lvdt_0 = lvdt_sm - lvdt_sm[0]
 
-    ax3.plot(t_rel, lvdt_0, alpha=0.7, color='slategrey')
-    lvdt_res = result.get('lvdt_res', {})
-    if lvdt_res.get('valid'):
-        _draw_trend_lines(ax3, lvdt_pts, lvdt_res, 'darkslateblue')
-        val = abs(lvdt_res['delta'])
-        label = fr"$\boldsymbol{{\delta}}_{{\boldsymbol{{LVDT}}}}$=$\boldsymbol{{{val:.1f}}}$ $\boldsymbol{{\mu m}}$"
-        _plot_arrow(ax3, 0, lvdt_res['val_pre_0'], lvdt_res['val_post_0'],
-                    'darkslateblue', label, ha='right')
+        ax3.plot(t_rel, lvdt_0, alpha=0.7, color='slategrey')
+        lvdt_res = result.get('lvdt_res', {})
+        if lvdt_res.get('valid'):
+            _draw_trend_lines(ax3, lvdt_pts, lvdt_res, 'darkslateblue')
+            val = abs(lvdt_res['delta'])
+            label = fr"$\boldsymbol{{\delta}}_{{\boldsymbol{{LVDT}}}}$=$\boldsymbol{{{val:.1f}}}$ $\boldsymbol{{\mu m}}$"
+            _plot_arrow(ax3, 0, lvdt_res['val_pre_0'], lvdt_res['val_post_0'],
+                        'darkslateblue', label, ha='right')
 
-    ax3.set_xlabel('time relative [s]')
-    ax3.set_ylabel('LVDT slip [\u03bcm]')
-    ax3.grid(True)
+        ax3.set_xlabel('time relative [s]')
+        ax3.set_ylabel('LVDT slip [\u03bcm]')
+        ax3.grid(True)
+    else:
+        # For 1D, put x-label on the last visible axis
+        ax2.set_xlabel('time relative [s]')
 
     plt.tight_layout()
     if save_path:
