@@ -573,11 +573,11 @@ class LabquakeExplorer:
             cfg['tau_smooth_w'] = int(entries['tau_smooth_w'].get())
             cfg['lvdt_smooth_w'] = int(entries['lvdt_smooth_w'].get())
 
-            # Auto-set window_sec so total span (2*half_win) is a multiple of 6.
+            # Auto-set window_sec so total span (2*half_win) is a multiple of 3.
             # This ensures the diagnostic-plot delta arrows have clean integer labels.
             import math
             _base = max(abs(cfg['pre_win'][0]), abs(cfg['post_win'][1]))
-            cfg['window_sec'] = math.ceil(2 * _base / 6) * 3
+            cfg['window_sec'] = math.ceil(2 * _base / 3) * 1.5
             skip_str = skip_var.get().strip()
             if skip_str:
                 cfg['skip_events'] = [int(x.strip()) for x in skip_str.split(',') if x.strip()]

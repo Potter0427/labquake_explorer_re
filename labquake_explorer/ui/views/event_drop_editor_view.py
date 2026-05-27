@@ -315,7 +315,8 @@ class EventDropEditorView(tk.Toplevel):
         self._tau_sm = tau_sm - tau_sm[0]   # cache for dynamic layer
 
         self.ax1.plot(t_rel, self._tau_sm, 'k', alpha=0.8)
-        self.ax1.set_ylabel(r'rel. $\tau$ [MPa]')
+        self.ax1.set_ylabel(r'rel. $\tau$ [MPa]', fontsize=12)
+        self.ax1.tick_params(axis='both', labelsize=12)
         self.ax1.set_title(f"Event {self.event_idx}")
         self.ax1.grid(True)
 
@@ -328,11 +329,13 @@ class EventDropEditorView(tk.Toplevel):
             color = eddy_colors[i % len(eddy_colors)]
             self.ax2.plot(t_rel, d, alpha=0.8, label=f'E{i+1}', color=color)
 
-        self.ax2.set_ylabel('rel. slip [μm]')
+        self.ax2.set_ylabel('rel. slip [μm]', fontsize=12)
+        self.ax2.tick_params(axis='both', labelsize=12)
         self.ax2.legend(loc='upper left', fontsize='small')
         self.ax2.grid(True)
 
         # ---- (3) LVDT (skip for 1D) ----
+        self.ax1.tick_params(labelbottom=False)  # hide top x-axis tick labels
         if not self._is_1d and self.ax3 is not None:
             lvdt_raw = self.time_history['LP_displacement'][mask]
             lvdt_sm = moving_average(lvdt_raw, config.get('lvdt_smooth_w', 100))
@@ -341,12 +344,16 @@ class EventDropEditorView(tk.Toplevel):
             self._lvdt_0 = lvdt_sm - lvdt_sm[0]  # cache for dynamic layer
 
             self.ax3.plot(t_rel, self._lvdt_0, alpha=0.7, color='slategrey')
-            self.ax3.set_xlabel('time relative [s]')
-            self.ax3.set_ylabel('LVDT slip [μm]')
+            self.ax3.set_xlabel('time relative [s]', fontsize=12)
+            self.ax3.set_ylabel('LVDT slip [μm]', fontsize=12)
+            self.ax3.tick_params(axis='both', labelsize=12)
             self.ax3.grid(True)
+            self.ax3.tick_params(labelbottom=True)
+            self.ax2.tick_params(labelbottom=False) # hide middle x-axis tick labels
         else:
             self._lvdt_0 = None
-            self.ax2.set_xlabel('time relative [s]')
+            self.ax2.set_xlabel('time relative [s]', fontsize=12)
+            self.ax2.tick_params(labelbottom=True)
 
         # ---- Draw draggable vlines (initially at pts positions) ----
         colors = ['blue', 'blue', 'red', 'red']
@@ -405,7 +412,7 @@ class EventDropEditorView(tk.Toplevel):
                           '--', color=color, alpha=0.7, lw=1.5)
             self._fit_lines.extend([l1, l2])
 
-        def _add_annotation(ax, pts, res, label_fmt, color, fontsize=10):
+        def _add_annotation(ax, pts, res, label_fmt, color, fontsize=12):
             if not res.get('valid'):
                 return
             val = abs(res['delta'])
@@ -423,7 +430,7 @@ class EventDropEditorView(tk.Toplevel):
             line.set_xdata([self.pts['tau'][i], self.pts['tau'][i]])
         _add_fit_lines(self.ax1, self.pts['tau'], tau_res, 'darkslateblue')
         _add_annotation(self.ax1, self.pts['tau'], tau_res,
-                        r'$\boldsymbol{\Delta}\boldsymbol{\tau}$=$\boldsymbol{%.4f}$', 'darkslateblue', fontsize=10)
+                        r'$\boldsymbol{\Delta}\boldsymbol{\tau}$=$\boldsymbol{%.4f}$', 'darkslateblue', fontsize=12)
 
         # ---- Slip vlines + fit ----
         eddy_colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple',
@@ -444,7 +451,7 @@ class EventDropEditorView(tk.Toplevel):
                 txt = self.ax2.text(0.1, (res_slip['val_pre_0'] + res_slip['val_post_0']) / 2,
                                     fr"$\boldsymbol{{\delta}}$=$\boldsymbol{{{val:.1f}}}$ $\boldsymbol{{\mu m}}$",
                                     ha='left', va='center',
-                                    color=slip_color, fontweight='bold', fontsize=10)
+                                    color=slip_color, fontweight='bold', fontsize=12)
                 self._annotations.extend([ann, txt])
 
         # ---- LVDT vlines + fit (skip for 1D) ----
@@ -461,7 +468,7 @@ class EventDropEditorView(tk.Toplevel):
                 txt = self.ax3.text(0.1, (lvdt_res['val_pre_0'] + lvdt_res['val_post_0']) / 2,
                                     fr"$\boldsymbol{{\delta}}_{{\boldsymbol{{LVDT}}}}$=$\boldsymbol{{{val:.1f}}}$ $\boldsymbol{{\mu m}}$",
                                     ha='left', va='center',
-                                    color='darkslateblue', fontweight='bold', fontsize=10)
+                                    color='darkslateblue', fontweight='bold', fontsize=12)
                 self._annotations.extend([ann, txt])
 
         self._update_status_label()

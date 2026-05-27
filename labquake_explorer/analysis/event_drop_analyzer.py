@@ -30,13 +30,12 @@ def compute_half_win(config: dict) -> float:
     The total span (2 * half_win) is rounded up to the nearest multiple of 3
     so that the diagnostic-plot arrows always have clean integer labels.
     """
-    half_win = config.get('window_sec', 1.5)
+    import math
     pre_win = config.get('pre_win', (-1.0, -0.5))
     post_win = config.get('post_win', (0.5, 1.0))
     base = max(abs(pre_win[0]), abs(post_win[1]))
     # Round up so that total span = 2*half_win is a multiple of 3
-    min_half = math.ceil(2 * base / 3) * 1.5
-    return max(half_win, min_half)
+    return math.ceil(2 * base / 3) * 1.5
 
 
 def calculate_2pt_trend_drop(

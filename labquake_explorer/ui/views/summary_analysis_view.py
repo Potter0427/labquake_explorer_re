@@ -243,12 +243,14 @@ class SummaryAnalysisView(tk.Toplevel):
         # This prevents colorbar from stealing layout space on every redraw.
         import matplotlib.gridspec as gridspec
         height_ratios = [1.5 if key == 'slip' else 1.0 for key in active]
+        # Dynamic bottom margin: fewer subplots → taller per subplot → need more fraction for x-axis label
+        bottom_margin = max(0.06, min(0.18, 0.18 / n))
         gs = gridspec.GridSpec(
             n, 2,
             figure=self.figure,
             width_ratios=[20, 1],
             height_ratios=height_ratios,
-            left=0.08, right=0.97, top=0.95, bottom=0.06,
+            left=0.08, right=0.93, top=0.95, bottom=bottom_margin,
             hspace=0.25, wspace=0.05,
         )
 
@@ -638,7 +640,7 @@ class SummaryAnalysisView(tk.Toplevel):
                 cax.axis('on')
                 ax.figure.colorbar(c, cax=cax, label='Rate [\u03bcm/s]')
                 ax.set_yticks(positions)
-                ax.set_ylabel('Distance [mm]')
+                ax.set_ylabel('Distance along fault [mm]')
             
             self._add_trigger_lines(ax, t_plot_start, t_plot_end, t_offset, add_text=(active[0]=='heatmap'))
 
