@@ -214,7 +214,7 @@ class ColoredLinesView(tk.Toplevel):
         gs = self.figure.add_gridspec(
             1, 2,
             width_ratios=[15, 1],
-            left=0.12, right=0.90,
+            left=0.15, right=0.83,
             top=0.95, bottom=0.10,
             wspace=0.1
         )
@@ -314,9 +314,10 @@ class ColoredLinesView(tk.Toplevel):
         self.cax.clear()
         self._colorbar = self.figure.colorbar(
             cm.ScalarMappable(norm=norm, cmap=cmap),
-            cax=self.cax,   # reuse fixed axes – no space stolen from self.ax
-            label='Time [s]'
+            cax=self.cax    # reuse fixed axes – no space stolen from self.ax
         )
+        self._colorbar.set_label('Time [s]', fontsize=14)
+        self._colorbar.ax.tick_params(labelsize=12)
 
         # Draw VW range in the middle
         try:
@@ -339,10 +340,11 @@ class ColoredLinesView(tk.Toplevel):
             pass
 
         # Axes labels / formatting
-        self.ax.set_xlabel('Distance along fault [mm]')
-        self.ax.set_ylabel('Slip [\u03bcm]')
+        self.ax.set_xlabel('Distance along fault [mm]', fontsize=14)
+        self.ax.set_ylabel('Slip [\u03bcm]', fontsize=14)
         self.ax.grid(True, axis='x', linestyle='-', alpha=0.6) # Standard alpha, vertical only
         self.ax.set_xticks(self.positions)
+        self.ax.tick_params(axis='both', which='major', labelsize=12)
         self.ax.margins(x=0)
         max_slip = np.max(d_samp) if d_samp.size > 0 else 1
         self.ax.set_ylim(0, max_slip)
