@@ -27,16 +27,15 @@ def moving_average(x, w, pad_mode='reflect'):
 def compute_half_win(config: dict) -> float:
     """Compute the half-window for data extraction around each trigger.
 
-    The total span (2 * half_win) is rounded up to the nearest multiple of 6
-    so that the diagnostic-plot arrows (full-span and 1/6-span) always have
-    clean integer labels.
+    The total span (2 * half_win) is rounded up to the nearest multiple of 3
+    so that the diagnostic-plot arrows always have clean integer labels.
     """
     half_win = config.get('window_sec', 1.5)
     pre_win = config.get('pre_win', (-1.0, -0.5))
     post_win = config.get('post_win', (0.5, 1.0))
     base = max(abs(pre_win[0]), abs(post_win[1]))
-    # Round up so that total span = 2*half_win is a multiple of 6
-    min_half = math.ceil(2 * base / 6) * 3
+    # Round up so that total span = 2*half_win is a multiple of 3
+    min_half = math.ceil(2 * base / 3) * 1.5
     return max(half_win, min_half)
 
 
