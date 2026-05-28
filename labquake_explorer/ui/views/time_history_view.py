@@ -262,17 +262,18 @@ class TimeHistoryView(tk.Toplevel):
             if y_item in GROUPS:
                 group_key = GROUPS[y_item]
                 if group_key == 'eddy':
-                    eddy_keys = sorted([k for k in self.time_history.keys() if 'eddy' in k])
-                    for k in eddy_keys:
+                    eddy_keys = sorted([k for k in self.time_history.keys() if 'eddy' in k.lower()])
+                    for i, k in enumerate(eddy_keys):
                         y_val = moving_average(self.time_history[k][mask], 50)
                         # Pad edges if moving_average shortened the array
                         if len(y_val) < len(x_data):
                             y_val = np.pad(y_val, (0, len(x_data) - len(y_val)), 'edge')
-                        ax.plot(x_data, y_val, label=k)
+                        y_val = y_val - y_val[0]
+                        ax.plot(x_data, y_val, label=f'E{i+1}')
                     if eddy_keys:
-                        ax.legend(loc='upper right', fontsize='small')
-                        ax.set_ylabel('μm')
-                        ax.set_title('Eddy Current Sensors (μm) [Smoothed w=50]')
+                        ax.legend(bbox_to_anchor=(1.01, 1), loc='upper left', fontsize='small', handletextpad=1.5, borderaxespad=1.0)
+                        ax.set_ylabel('slip [μm]')
+                        ax.set_title('Eddy Current Sensors')
                 elif group_key == 'pressure':
                     w_p = 50
                     if 'mu' in self.time_history:
