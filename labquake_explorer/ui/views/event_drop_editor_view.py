@@ -639,7 +639,9 @@ class EventDropEditorView(tk.Toplevel):
             self.parent.refresh_tree()
 
         msg = f"Event {self.event_idx} updated and saved to HDF5."
-        messagebox.showinfo("Applied & Saved", msg)
+        if hasattr(self, 'status_label'):
+            self.status_label.config(text=msg, foreground="green")
+        print(msg)
 
     def _delete_event(self):
         confirm = messagebox.askyesno(

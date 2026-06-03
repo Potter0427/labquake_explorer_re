@@ -204,9 +204,16 @@ def run_batch_analysis(
     config: dict,
     output_dir: Optional[str] = None,
     progress_callback=None,
+    compute_flags: Optional[Dict] = None,
 ) -> Dict[int, Dict]:
     """
     Run analysis on all events, generate diagnostic plots.
+
+    Parameters
+    ----------
+    compute_flags : dict, optional
+        Keys: 'tau', 'slip', 'lvdt', 'D'.
+        Set a key to False to skip computing that metric.
     """
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -216,7 +223,7 @@ def run_batch_analysis(
     skip_list = config.get('skip_events', [])
 
     for i in range(1, n):
-        row = analyze_single_event(time_history, events, i, config)
+        row = analyze_single_event(time_history, events, i, config, compute_flags)
         results[i] = row
 
         # Generate diagnostic plot (skip if event is skipped)

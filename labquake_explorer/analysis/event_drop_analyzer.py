@@ -205,12 +205,27 @@ def analyze_single_event(
     events: List[Dict],
     event_idx: int,
     config: dict,
+    compute_flags: Optional[Dict[str, bool]] = None,
 ) -> Dict[str, Any]:
     """
     Analyze one event and return computed drop values.
 
+    Parameters
+    ----------
+    compute_flags : dict, optional
+        Keys: 'tau', 'slip', 'lvdt', 'D'.
+        Set a key to False to skip computing that metric
+        (its value stays NaN so existing data is not overwritten).
+        Defaults to all True when not provided.
+
     Returns a nested dict matching the new schema.
     """
+    if compute_flags is None:
+        compute_flags = {}
+    do_tau  = compute_flags.get('tau',  True)
+    do_slip = compute_flags.get('slip', True)
+    do_lvdt = compute_flags.get('lvdt', True)
+    do_D    = compute_flags.get('D',    True)
     tau_pts, slip_pts, lvdt_pts = _get_event_windows(event_idx, config)
     skip_list = config.get('skip_events', [])
     half_win = compute_half_win(config)
@@ -272,29 +287,31 @@ def analyze_single_event(
         return row
 
     # --- delta_tau ---
-    tau_key = 'tau_local' if 'tau_local' in time_history else 'shear_pressure'
-    tau_raw = time_history[tau_key][mask]
-    tau_sm = moving_average(tau_raw, config.get('tau_smooth_w', 100))
-    if len(tau_sm) < len(t_rel):
-        tau_sm = np.pad(tau_sm, (0, len(t_rel) - len(tau_sm)), 'edge')
-    tau_sm = tau_sm - tau_sm[0]
+    if do_tau:
+        tau_key = 'tau_local' if 'tau_local' in time_history else 'shear_pressure'
+        tau_raw = time_history[tau_key][mask]
+        tau_sm = moving_average(tau_raw, config.get('tau_smooth_w', 100))
+        if len(tau_sm) < len(t_rel):
+            tau_sm = np.pad(tau_sm, (0, len(t_rel) - len(tau_sm)), 'edge')
+        tau_sm = tau_sm - tau_sm[0]
 
-    res_tau = calculate_2pt_trend_drop(t_rel, tau_sm, tau_pts)
-    row['tau']['value'] = abs(res_tau['delta']) if res_tau['valid'] else np.nan
-    row['tau_res'] = res_tau  # keep full result for plotting
+        res_tau = calculate_2pt_trend_drop(t_rel, tau_sm, tau_pts)
+        row['tau']['value'] = abs(res_tau['delta']) if res_tau['valid'] else np.nan
+        row['tau_res'] = res_tau  # keep full result for plotting
 
     # --- delta_slip (each eddy channel) ---
-    eddy_keys = sorted([k for k in time_history.keys() if 'eddy' in k.lower()])
-    for i, k in enumerate(eddy_keys):
-        d = time_history[k][mask] - time_history[k][mask][0]
-        res_slip = calculate_2pt_trend_drop(t_rel, d, slip_pts)
-        row['delta'][f'E{i+1}_value'] = abs(res_slip['delta']) if res_slip['valid'] else np.nan
-        row[f'delta_E{i+1}_res'] = res_slip
+    if do_slip:
+        eddy_keys = sorted([k for k in time_history.keys() if 'eddy' in k.lower()])
+        for i, k in enumerate(eddy_keys):
+            d = time_history[k][mask] - time_history[k][mask][0]
+            res_slip = calculate_2pt_trend_drop(t_rel, d, slip_pts)
+            row['delta'][f'E{i+1}_value'] = abs(res_slip['delta']) if res_slip['valid'] else np.nan
+            row[f'delta_E{i+1}_res'] = res_slip
 
     # --- delta_lvdt ---
     is_1d = time_history.get('is_1d', False)
 
-    if not is_1d:
+    if do_lvdt and not is_1d:
         lvdt_raw = time_history['LP_displacement'][mask]
         lvdt_sm = moving_average(lvdt_raw, config.get('lvdt_smooth_w', 100))
         if len(lvdt_sm) < len(t_rel):
@@ -305,7 +322,7 @@ def analyze_single_event(
         row['lvdt']['value'] = abs(res_lvdt['delta']) if res_lvdt['valid'] else np.nan
         row['lvdt_res'] = res_lvdt
 
-    if not is_1d:
+    if do_D and not is_1d:
         push_speed = config.get('push_speed', 3.508)
         delay_sec = config.get('delay_sec', 0.05)
 
@@ -357,10 +374,11 @@ def analyze_all_events(
     time_history: Dict[str, np.ndarray],
     events: List[Dict],
     config: dict,
+    compute_flags: Optional[Dict[str, bool]] = None,
 ) -> Dict[int, Dict[str, Any]]:
     """Run analysis on all events. Returns dict of result dicts."""
     results = {}
     for i in range(1, len(events)):
-        row = analyze_single_event(time_history, events, i, config)
+        row = analyze_single_event(time_history, events, i, config, compute_flags)
         results[i] = row
     return results

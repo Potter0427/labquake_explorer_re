@@ -547,6 +547,30 @@ class LabquakeExplorer:
         ttk.Entry(config_win, textvariable=skip_var, width=60).grid(row=row, column=1, padx=5, pady=3)
         row += 1
 
+        # --- Compute flags ---
+        ttk.Separator(config_win, orient='horizontal').grid(
+            row=row, column=0, columnspan=2, sticky='ew', pady=(8, 2)
+        )
+        row += 1
+        ttk.Label(config_win, text="Compute:", font=('', 9, 'bold')).grid(
+            row=row, column=0, padx=5, sticky='w'
+        )
+        flag_frame = ttk.Frame(config_win)
+        flag_frame.grid(row=row, column=1, padx=5, sticky='w')
+        flag_vars = {}
+        saved_flags = UserPrefs.get('DropAnalysis', 'compute_flags', {})
+        for flag_key, flag_label in [
+            ('tau',  'Tau drop'),
+            ('slip', 'Eddy slip'),
+            ('lvdt', 'LVDT drop'),
+            ('D',    'D'),
+        ]:
+            default_val = bool(saved_flags.get(flag_key, True))
+            v = tk.BooleanVar(value=default_val)
+            ttk.Checkbutton(flag_frame, text=flag_label, variable=v).pack(side='left', padx=4)
+            flag_vars[flag_key] = v
+        row += 1
+
         # Auto-detect output folder from HDF5 path + run name
         default_output = ""
         if self.data_manager.data_path:
@@ -592,6 +616,7 @@ class LabquakeExplorer:
                 'tau_smooth_w': cfg['tau_smooth_w'],
                 'lvdt_smooth_w': cfg['lvdt_smooth_w']
             })
+            UserPrefs.set('DropAnalysis', 'compute_flags', {k: v.get() for k, v in flag_vars.items()})
             # Persist skip_events to the shared run-level list (only user-entered ones)
             self.data_manager.save_run_skip_events(run_idx, list(cfg['skip_events']))
 
@@ -619,13 +644,16 @@ class LabquakeExplorer:
 
             config_win.destroy()
 
+            compute_flags = {k: v.get() for k, v in flag_vars.items()}
+
             # Run analysis
             self.root.config(cursor="wait")
             self.root.update()
             try:
                 results_dict = run_batch_analysis(
                     time_history, events, cfg,
-                    output_dir=output_dir
+                    output_dir=output_dir,
+                    compute_flags=compute_flags,
                 )
 
                 # Store results in memory
@@ -647,6 +675,19 @@ class LabquakeExplorer:
                     for k in list(res.keys()):
                         if k.endswith('_res') or k == 'event_idx':
                             del res[k]
+
+                    # 未勾選的指標，從 result 裡移掉，不覆蓋舊數值
+                    if not compute_flags.get('tau', True):
+                        res.pop('tau', None)
+                    if not compute_flags.get('slip', True):
+                        res.pop('delta', None)
+                    if not compute_flags.get('lvdt', True):
+                        res.pop('lvdt', None)
+                    if not compute_flags.get('D', True):
+                        res.pop('D_Push', None)
+                        res.pop('D_max', None)
+                        res.pop('D_E3', None)
+
                     # category=None 表示直接寫入 events[ev_idx] 的根目錄，不建立 drop 資料夾
                     self.data_manager.fast_save_event_analysis(run_idx, ev_idx, None, res)
 

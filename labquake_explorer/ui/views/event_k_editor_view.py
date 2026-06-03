@@ -139,6 +139,9 @@ class EventKEditorView(tk.Toplevel):
         self.lp_freq_var = tk.StringVar(value=str(self.config.get('k_lowpass_freq', 0.0)))
         ttk.Entry(ctrl, textvariable=self.lp_freq_var, width=6).grid(row=0, column=14, padx=3)
 
+        self.status_label = ttk.Label(ctrl, text="", font=("TkDefaultFont", 10, "bold"))
+        self.status_label.grid(row=0, column=20, padx=10)
+
         # Buttons
         ttk.Button(ctrl, text="Recompute", command=self._recompute_preview).grid(
             row=0, column=15, padx=10
@@ -750,7 +753,9 @@ class EventKEditorView(tk.Toplevel):
             self.parent.refresh_tree()
 
         msg = f"Event {self.event_idx} k value updated and saved."
-        messagebox.showinfo("Applied & Saved", msg)
+        if hasattr(self, 'status_label'):
+            self.status_label.config(text=msg, foreground="green")
+        print(msg)
 
     def _delete_event(self):
         confirm = messagebox.askyesno(
