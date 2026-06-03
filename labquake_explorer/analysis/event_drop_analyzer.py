@@ -309,15 +309,14 @@ def analyze_single_event(
         push_speed = config.get('push_speed', 3.508)
         delay_sec = config.get('delay_sec', 0.05)
 
-        # Need previous non-skipped and valid event
+        # Use the immediately previous event as reference for D calculation,
+        # regardless of skip status (skipped events may be noise triggers but
+        # still represent real elapsed time / displacement between events).
+        # Only skip entries where the trigger time itself is invalid (None).
         if event_idx > 0:
             prev_idx = event_idx - 1
             t_trig_prev = None
             while prev_idx >= 0:
-                if prev_idx in skip_list:
-                    prev_idx -= 1
-                    continue
-                
                 pe = events[prev_idx]
                 t_trig_prev = _get_t_trig(pe)
                 if t_trig_prev is not None:
