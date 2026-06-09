@@ -432,6 +432,18 @@ class EventDropEditorView(tk.Toplevel):
         _add_annotation(self.ax1, self.pts['tau'], tau_res,
                         r'$\boldsymbol{\Delta}\boldsymbol{\tau}$=$\boldsymbol{%.4f}$', 'darkslateblue', fontsize=12)
 
+        # ---- Delta Mu text (shown on tau subplot) ----
+        mu_res = result.get('mu_res', {})
+        if mu_res.get('valid'):
+            mu_val = abs(mu_res['delta'])
+            txt_mu = self.ax1.text(
+                0.98, 0.98,
+                fr"$\Delta\mu$={mu_val:.4f}",
+                transform=self.ax1.transAxes, ha='right', va='top',
+                color='darkorange', fontweight='bold', fontsize=11,
+                bbox=dict(facecolor='white', alpha=0.7, edgecolor='darkorange', boxstyle='round,pad=0.3'))
+            self._annotations.append(txt_mu)
+
         # ---- Slip vlines + fit ----
         eddy_colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple',
                        'tab:brown', 'tab:pink', 'tab:gray', 'tab:olive', 'tab:cyan']

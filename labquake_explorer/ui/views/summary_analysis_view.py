@@ -18,6 +18,7 @@ SUMMARY_SUBPLOT_DEFS = [
     ('slip', 'Slip'),
     ('mu', 'Mu'),
     ('delta_tau', r'$\Delta\tau$'),
+    ('delta_mu', r'$\Delta\mu$'),
     ('delta_slip', r'$\Delta$ Slip'),
     ('delta_lvdt', r'$\Delta$ LVDT'),
     ('d_values', 'D'),
@@ -58,7 +59,7 @@ class SummaryAnalysisView(tk.Toplevel):
         # Load analysis results from events directly
         self.analysis = None
         self.results = {}
-        keys_to_extract = ['delta_tau', 'delta_lvdt', 'D_Push', 'D_max', 'D_E3', 'skipped', 'k']
+        keys_to_extract = ['delta_tau', 'delta_mu', 'delta_lvdt', 'D_Push', 'D_max', 'D_E3', 'skipped', 'k']
         
         # Determine any dynamic keys (e.g., delta_E1) from the first available event
         for ev in self.events:
@@ -411,6 +412,19 @@ class SummaryAnalysisView(tk.Toplevel):
                         ha='center', va='center', transform=ax.transAxes, color='gray')
             ax.set_ylabel(r'$\Delta\tau$ [MPa]')
             self._add_trigger_lines(ax, t_plot_start, t_plot_end, t_offset, add_text=(active[0]=='delta_tau'))
+
+        # --- (3b) Delta Mu ---
+        if 'delta_mu' in self.axs_map:
+            ax = self.axs_map['delta_mu']
+            t_r, vals = _get_analysis_in_range('delta_mu')
+            if t_r is not None and len(t_r) > 0:
+                valid = ~np.isnan(vals)
+                ax.plot(t_r[valid], vals[valid], 'o-', markersize=3, color='darkorange')
+            else:
+                ax.text(0.5, 0.5, 'Run "Run Drop Analysis" first',
+                        ha='center', va='center', transform=ax.transAxes, color='gray')
+            ax.set_ylabel(r'$\Delta\mu$')
+            self._add_trigger_lines(ax, t_plot_start, t_plot_end, t_offset, add_text=(active[0]=='delta_mu'))
 
         # --- (4) Delta Slip ---
         if 'delta_slip' in self.axs_map:

@@ -223,6 +223,7 @@ def analyze_single_event(
     if compute_flags is None:
         compute_flags = {}
     do_tau  = compute_flags.get('tau',  True)
+    do_mu   = compute_flags.get('mu',   True)
     do_slip = compute_flags.get('slip', True)
     do_lvdt = compute_flags.get('lvdt', True)
     do_D    = compute_flags.get('D',    True)
@@ -258,6 +259,7 @@ def analyze_single_event(
             'post_end': lvdt_pts[3] if lvdt_pts else np.nan,
             'smooth_w': config.get('lvdt_smooth_w', 100),
         },
+        'delta_mu': np.nan,
         'D_Push': np.nan,
         'D_max': np.nan,
         'D_E3': np.nan,
@@ -298,6 +300,18 @@ def analyze_single_event(
         res_tau = calculate_2pt_trend_drop(t_rel, tau_sm, tau_pts)
         row['tau']['value'] = abs(res_tau['delta']) if res_tau['valid'] else np.nan
         row['tau_res'] = res_tau  # keep full result for plotting
+
+    # --- delta_mu ---
+    if do_mu and 'mu' in time_history:
+        mu_raw = time_history['mu'][mask]
+        mu_sm = moving_average(mu_raw, config.get('tau_smooth_w', 100))
+        if len(mu_sm) < len(t_rel):
+            mu_sm = np.pad(mu_sm, (0, len(t_rel) - len(mu_sm)), 'edge')
+        mu_sm = mu_sm - mu_sm[0]
+
+        res_mu = calculate_2pt_trend_drop(t_rel, mu_sm, tau_pts)
+        row['delta_mu'] = abs(res_mu['delta']) if res_mu['valid'] else np.nan
+        row['mu_res'] = res_mu  # keep full result for plotting
 
     # --- delta_slip (each eddy channel) ---
     if do_slip:

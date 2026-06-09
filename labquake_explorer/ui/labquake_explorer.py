@@ -561,6 +561,7 @@ class LabquakeExplorer:
         saved_flags = UserPrefs.get('DropAnalysis', 'compute_flags', {})
         for flag_key, flag_label in [
             ('tau',  'Tau drop'),
+            ('mu',   'Mu drop'),
             ('slip', 'Eddy slip'),
             ('lvdt', 'LVDT drop'),
             ('D',    'D'),
@@ -646,6 +647,32 @@ class LabquakeExplorer:
 
             compute_flags = {k: v.get() for k, v in flag_vars.items()}
 
+            # Rebuild per_event_windows from saved per-event pts stored in each event dict.
+            # This ensures windows individually adjusted in EventDropEditor are respected.
+            def _valid_pts(d):
+                if not isinstance(d, dict): return False
+                if 'pre_start' not in d: return False
+                import math
+                pts = [d.get('pre_start'), d.get('pre_end'), d.get('post_start'), d.get('post_end')]
+                return all(x is not None and not (isinstance(x, float) and math.isnan(x)) for x in pts)
+
+            pew = {}
+            for ev_idx, ev in enumerate(events):
+                if not isinstance(ev, dict): continue
+                entry = {}
+                if 'tau' in ev and _valid_pts(ev['tau']):
+                    td = ev['tau']
+                    entry['tau_pts'] = [td['pre_start'], td['pre_end'], td['post_start'], td['post_end']]
+                if 'delta' in ev and _valid_pts(ev['delta']):
+                    sd = ev['delta']
+                    entry['slip_pts'] = [sd['pre_start'], sd['pre_end'], sd['post_start'], sd['post_end']]
+                if 'lvdt' in ev and _valid_pts(ev['lvdt']):
+                    ld = ev['lvdt']
+                    entry['lvdt_pts'] = [ld['pre_start'], ld['pre_end'], ld['post_start'], ld['post_end']]
+                if entry:
+                    pew[ev_idx] = entry
+            cfg['per_event_windows'] = pew
+
             # Run analysis
             self.root.config(cursor="wait")
             self.root.update()
@@ -679,6 +706,8 @@ class LabquakeExplorer:
                     # 未勾選的指標，從 result 裡移掉，不覆蓋舊數值
                     if not compute_flags.get('tau', True):
                         res.pop('tau', None)
+                    if not compute_flags.get('mu', True):
+                        res.pop('delta_mu', None)
                     if not compute_flags.get('slip', True):
                         res.pop('delta', None)
                     if not compute_flags.get('lvdt', True):

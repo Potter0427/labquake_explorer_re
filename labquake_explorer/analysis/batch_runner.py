@@ -121,6 +121,16 @@ def generate_diagnostic_plot(
     _add_window_delta(ax1, t_rel, tau_sm, wide_offset, 'orange', wide_label, symbol='\\tau')
     _add_window_delta(ax1, t_rel, tau_sm, narrow_offset, 'green', narrow_label, symbol='\\tau')
 
+    # delta_mu annotation (shown as text in tau subplot)
+    mu_res = result.get('mu_res', {})
+    if mu_res.get('valid'):
+        mu_val = abs(mu_res['delta'])
+        ax1.text(0.98, 0.98,
+                 fr"$\Delta\mu$={mu_val:.4f}",
+                 transform=ax1.transAxes, ha='right', va='top',
+                 color='darkorange', fontweight='bold', fontsize=11,
+                 bbox=dict(facecolor='white', alpha=0.7, edgecolor='darkorange', boxstyle='round,pad=0.3'))
+
     ax1.set_ylabel(r'rel. $\tau$ [MPa]')
     ax1.set_title(f"Event {event_idx}")
     ax1.grid(True)
