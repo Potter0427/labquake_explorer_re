@@ -335,7 +335,7 @@ class ColoredLinesView(tk.Toplevel):
                 vw_size = float(match.group(1))
                 vw_start = 250 - vw_size / 2.0
                 vw_end = 250 + vw_size / 2.0
-                self.ax.axvspan(vw_start, vw_end, alpha=0.3, color='khaki', label='VW Zone', zorder=0)
+                self.ax.axvspan(vw_start, vw_end, alpha=0.8, color='khaki', label='VW Zone', zorder=0)
         except Exception as e:
             pass
 
