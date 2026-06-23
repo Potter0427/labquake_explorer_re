@@ -527,8 +527,8 @@ class EventDropEditorView(tk.Toplevel):
         ax_name = self.ax_inv_map.get(event.inaxes)
         if not ax_name:
             return
-
-        threshold = 0.05
+        xlim = event.inaxes.get_xlim()
+        threshold = (xlim[1] - xlim[0]) * 0.03
         closest_idx = -1
         min_dist = float('inf')
 
