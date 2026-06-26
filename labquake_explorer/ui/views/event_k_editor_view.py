@@ -36,6 +36,8 @@ from labquake_explorer.analysis.k_stiffness_analyzer import (
     DEFAULT_K_CONFIG,
     _process_signal,
     _get_t_trig,
+    _get_slip_array,
+    _slip_axis_label,
 )
 
 
@@ -165,6 +167,17 @@ class EventKEditorView(tk.Toplevel):
         )
         self.use_ransac_check.grid(row=0, column=19, padx=5)
 
+        # Slip source selector
+        ttk.Label(ctrl, text="Slip source:").grid(row=0, column=20, padx=5)
+        slip_sources = ['LVDT', 'E1', 'E2', 'E3', 'E4', 'E5']
+        self.slip_source_var = tk.StringVar(value=self.config.get('k_slip_source', 'LVDT'))
+        self.slip_source_combo = ttk.Combobox(
+            ctrl, textvariable=self.slip_source_var,
+            values=slip_sources, state='readonly', width=6
+        )
+        self.slip_source_combo.grid(row=0, column=21, padx=3)
+        self.slip_source_combo.bind('<<ComboboxSelected>>', self._on_slip_source_changed)
+
         # Build figure once – Canvas is never destroyed after this point
         self._build_figure()
         self._draw_static(self._get_current_config())
@@ -186,6 +199,8 @@ class EventKEditorView(tk.Toplevel):
         self.lp_freq_var.set(str(self.config.get('k_lowpass_freq', 0.0)))
         if hasattr(self, 'use_ransac_var'):
             self.use_ransac_var.set(self.config.get('k_use_ransac', False))
+        if hasattr(self, 'slip_source_var'):
+            self.slip_source_var.set(self.config.get('k_slip_source', 'LVDT'))
         self._draw_static(self._get_current_config())
         self._recompute()
 
@@ -259,6 +274,8 @@ class EventKEditorView(tk.Toplevel):
                         self.config['k_highpass_freq'] = float(event_k['highpass_freq'])
                     if 'lowpass_freq' in event_k:
                         self.config['k_lowpass_freq'] = float(event_k['lowpass_freq'])
+                    if 'slip_source' in event_k:
+                        self.config['k_slip_source'] = str(event_k['slip_source'])
         except Exception:
             pass
 
@@ -275,6 +292,8 @@ class EventKEditorView(tk.Toplevel):
             pass
         if hasattr(self, 'use_ransac_var'):
             cfg['k_use_ransac'] = self.use_ransac_var.get()
+        if hasattr(self, 'slip_source_var'):
+            cfg['k_slip_source'] = self.slip_source_var.get()
         return cfg
 
     # ------------------------------------------------------------------
@@ -290,11 +309,11 @@ class EventKEditorView(tk.Toplevel):
         self.ax3 = self.figure.add_subplot(gs[2, 0])
         self.ax_cbar = self.figure.add_subplot(gs[2, 1])
 
-        self.ax1.set_ylabel('LVDT slip [μm]')
+        self.ax1.set_ylabel('slip [μm]')
         self.ax2.set_ylabel(r'rel. $\tau$ [MPa]')
         self.ax2.set_xlabel('time relative [s]')
         self.ax3.set_ylabel(r'rel. $\tau$ [MPa]')
-        self.ax3.set_xlabel('LVDT slip [μm]')
+        self.ax3.set_xlabel('slip [μm]')
 
         self.canvas = FigureCanvasTkAgg(self.figure, master=self)
         self.canvas.get_tk_widget().grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
@@ -311,9 +330,9 @@ class EventKEditorView(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _get_processed_signals(self, config):
-        """Return processed tau and LVDT arrays, using cache when possible.
+        """Return processed tau and slip arrays, using cache when possible.
 
-        Cache key: (event_idx, w, hp_freq, half_win).
+        Cache key: (event_idx, w, hp_freq, lp_freq, half_win, slip_source).
         On a cache hit the expensive _process_signal / filter step is skipped.
         """
         ev = self.events[self.event_idx]
@@ -326,8 +345,9 @@ class EventKEditorView(tk.Toplevel):
         hp_freq = config.get('k_highpass_freq', 0.0)
         lp_freq = config.get('k_lowpass_freq', 0.0)
         half_win = max(config.get('k_window_sec', 3.5), abs(k_pre_start) + 0.5)
+        slip_source = config.get('k_slip_source', 'LVDT')
 
-        cache_key = (self.event_idx, w, hp_freq, lp_freq, half_win)
+        cache_key = (self.event_idx, w, hp_freq, lp_freq, half_win, slip_source)
 
         if cache_key in self._signal_cache:
             return self._signal_cache[cache_key]
@@ -346,8 +366,10 @@ class EventKEditorView(tk.Toplevel):
         tau_raw = self.time_history[tau_key][mask]
         tau_proc = _process_signal(tau_raw, w, hp_freq, lp_freq, fs)
 
-        lvdt_raw = self.time_history['LP_displacement'][mask]
-        lvdt_proc = _process_signal(lvdt_raw, w, hp_freq, lp_freq, fs)
+        slip_raw = _get_slip_array(self.time_history, slip_source, mask)
+        if slip_raw is None:
+            slip_raw = self.time_history['LP_displacement'][mask]
+        slip_proc = _process_signal(slip_raw, w, hp_freq, lp_freq, fs)
 
         payload = {
             't_trig': t_trig,
@@ -356,8 +378,9 @@ class EventKEditorView(tk.Toplevel):
             'fs': fs,
             'tau_raw': tau_raw,
             'tau_proc': tau_proc,
-            'lvdt_raw': lvdt_raw,
-            'lvdt_proc': lvdt_proc,
+            'slip_raw': slip_raw,
+            'slip_proc': slip_proc,
+            'slip_source': slip_source,
         }
         # Keep only the latest cache entry to bound memory usage
         self._signal_cache = {cache_key: payload}
@@ -383,21 +406,23 @@ class EventKEditorView(tk.Toplevel):
 
         k_pre_start = config.get('k_pre_start', -3.0)
         k_pre_end = config.get('k_pre_end', -0.5)
+        slip_source = config.get('k_slip_source', 'LVDT')
+        slip_ylabel = _slip_axis_label(slip_source)
 
         t_rel = signals['t_rel']
         tau_raw = signals['tau_raw']
         tau_proc = signals['tau_proc']
-        lvdt_raw = signals['lvdt_raw']
-        lvdt_proc = signals['lvdt_proc']
+        slip_raw = signals['slip_raw']
+        slip_proc = signals['slip_proc']
 
         tau_raw_z = tau_raw - tau_raw[0]
         tau_proc_z = tau_proc - tau_proc[0]
-        lvdt_raw_z = lvdt_raw - lvdt_raw[0]
-        lvdt_proc_z = lvdt_proc - lvdt_proc[0]
+        slip_raw_z = slip_raw - slip_raw[0]
+        slip_proc_z = slip_proc - slip_proc[0]
 
         # Cache zero-referenced processed signals for dynamic layer
         self._tau_proc_z = tau_proc_z
-        self._lvdt_proc_z = lvdt_proc_z
+        self._slip_proc_z = slip_proc_z
         self._t_rel_static = t_rel
 
         t_disp_start = k_pre_start
@@ -413,21 +438,21 @@ class EventKEditorView(tk.Toplevel):
         self._vlines_end = []
         self._axvspan = None
 
-        # ---- ax1: LVDT vs time ----
-        self.ax1.plot(t_rel[disp_mask], lvdt_raw_z[disp_mask],
+        # ---- ax1: Slip vs time ----
+        self.ax1.plot(t_rel[disp_mask], slip_raw_z[disp_mask],
                       color='C0', alpha=0.5, lw=0.8, label='Raw')
-        self.ax1.plot(t_rel[disp_mask], lvdt_proc_z[disp_mask],
+        self.ax1.plot(t_rel[disp_mask], slip_proc_z[disp_mask],
                       color='red', alpha=0.6, lw=1.5, label='Processed')
         l1s = self.ax1.axvline(x=k_pre_start, color='blue', ls='--', alpha=0.5, lw=1)
         l1e = self.ax1.axvline(x=k_pre_end, color='blue', ls='--', alpha=0.5, lw=1)
         self.ax1.axvspan(k_pre_start, k_pre_end, alpha=0.08, color='blue')
-        self.ax1.set_ylabel('LVDT slip [μm]')
-        self.ax1.set_title(f'Event {self.event_idx} - K Stiffness')
+        self.ax1.set_ylabel(slip_ylabel)
+        self.ax1.set_title(f'Event {self.event_idx} - K Stiffness ({slip_source})')
         self.ax1.legend(loc='upper left', fontsize='small')
         self.ax1.grid(True)
 
         if hasattr(self, 'focus_y_var') and self.focus_y_var.get():
-            y1_data = lvdt_proc_z[disp_mask]
+            y1_data = slip_proc_z[disp_mask]
             if len(y1_data) > 0:
                 y1_min, y1_max = np.min(y1_data), np.max(y1_data)
                 y1_range = y1_max - y1_min
@@ -459,7 +484,7 @@ class EventKEditorView(tk.Toplevel):
         self._vlines_end = [l1e, l2e]
 
         # ax3 stays clear; _draw_dynamic will populate it
-        self.ax3.set_xlabel('LVDT slip [μm]')
+        self.ax3.set_xlabel(slip_ylabel)
         self.ax3.set_ylabel(r'rel. $\tau$ [MPa]')
         self.ax3.set_title('Pre-Rupture Stiffness')
         self.ax3.grid(True)
@@ -480,6 +505,8 @@ class EventKEditorView(tk.Toplevel):
         """
         k_pre_start = config.get('k_pre_start', -3.0)
         k_pre_end = config.get('k_pre_end', -0.5)
+        slip_source = config.get('k_slip_source', 'LVDT')
+        slip_xlabel = _slip_axis_label(slip_source)
 
         # ---- Update vline positions ----
         for line in self._vlines_start:
@@ -512,15 +539,15 @@ class EventKEditorView(tk.Toplevel):
 
         t_rel = getattr(self, '_t_rel_static', None)
         tau_proc_z = getattr(self, '_tau_proc_z', None)
-        lvdt_proc_z = getattr(self, '_lvdt_proc_z', None)
+        slip_proc_z = getattr(self, '_slip_proc_z', None)
 
-        if t_rel is not None and tau_proc_z is not None and lvdt_proc_z is not None:
+        if t_rel is not None and tau_proc_z is not None and slip_proc_z is not None:
             pre_mask = (t_rel >= k_pre_start) & (t_rel <= k_pre_end)
             if np.sum(pre_mask) > 5:
                 tau_pre = tau_proc_z[pre_mask]
-                lvdt_pre = lvdt_proc_z[pre_mask]
+                slip_pre = slip_proc_z[pre_mask]
 
-                sc = self.ax3.scatter(lvdt_pre, tau_pre, c=t_rel[pre_mask], cmap='viridis',
+                sc = self.ax3.scatter(slip_pre, tau_pre, c=t_rel[pre_mask], cmap='viridis',
                                       s=8, alpha=0.6, edgecolors='none', label='Data')
                 
                 self.ax_cbar.set_visible(True)
@@ -536,13 +563,13 @@ class EventKEditorView(tk.Toplevel):
                 if isinstance(k_val, (int, float, np.number)) and not np.isnan(k_val):
                     k_coeffs = result.get('k_coeffs', None)
                     if k_coeffs is not None:
-                        fit_y = k_coeffs[0] * lvdt_pre + k_coeffs[1]
-                        self.ax3.plot(lvdt_pre, fit_y, 'r-', lw=2,
+                        fit_y = k_coeffs[0] * slip_pre + k_coeffs[1]
+                        self.ax3.plot(slip_pre, fit_y, 'r-', lw=2,
                                       label=fr'Fit: $k$ = {k_val:.4f} MPa/$\mu$m')
 
                 self.ax3.legend(loc='best', fontsize='small')
 
-        self.ax3.set_xlabel('LVDT slip [μm]')
+        self.ax3.set_xlabel(slip_xlabel)
         self.ax3.set_ylabel(r'rel. $\tau$ [MPa]')
         self.ax3.set_title('Pre-Rupture Stiffness')
         self.ax3.grid(True)
@@ -691,6 +718,14 @@ class EventKEditorView(tk.Toplevel):
         is skipped.  Sets _preview_active so the red overlay is suppressed."""
         if self.event_idx in self.config.get('skip_events', []):
             self._preview_active = True
+        self._recompute()
+
+    def _on_slip_source_changed(self, event=None):
+        """Called when the slip source combobox selection changes."""
+        # Invalidate cache entirely since the signal data has changed
+        self._signal_cache.clear()
+        cfg = self._get_current_config()
+        self._draw_static(cfg)
         self._recompute()
 
     def _sync_skip_to_other(self, event_idx, action='add'):
