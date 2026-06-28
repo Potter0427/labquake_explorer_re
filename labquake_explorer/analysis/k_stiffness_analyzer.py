@@ -27,8 +27,57 @@ DEFAULT_K_CONFIG = {
     'k_lowpass_freq': 0.0,     # low-pass filter cutoff frequency (Hz), 0 = off
     'k_use_ransac': False,     # whether to use RANSAC for line fitting
     'k_window_sec': 3.5,       # half-window around trigger for data extraction
+    'k_slip_source': 'LVDT',   # slip source: 'LVDT' or 'E1'..'E5'
     'skip_events': [],
 }
+
+
+# ------------------------------------------------------------------
+# Slip source helper
+# ------------------------------------------------------------------
+
+# Mapping: E1 -> eddy_ch8, E2 -> eddy_ch9, ..., E5 -> eddy_ch12
+_EDDY_CHANNEL_MAP = {
+    'E1': 'eddy_ch8',
+    'E2': 'eddy_ch9',
+    'E3': 'eddy_ch10',
+    'E4': 'eddy_ch11',
+    'E5': 'eddy_ch12',
+}
+
+
+def _get_slip_array(
+    time_history: Dict[str, np.ndarray],
+    slip_source: str,
+    mask: Optional[np.ndarray] = None,
+) -> Optional[np.ndarray]:
+    """
+    Return the slip array for the given source.
+
+    Parameters
+    ----------
+    time_history : dict
+    slip_source  : 'LVDT' | 'E1' | 'E2' | 'E3' | 'E4' | 'E5'
+    mask         : optional boolean index array
+
+    Returns None if the requested channel is absent.
+    """
+    if slip_source == 'LVDT' or slip_source is None:
+        key = 'LP_displacement'
+    else:
+        key = _EDDY_CHANNEL_MAP.get(str(slip_source).upper(), 'LP_displacement')
+
+    arr = time_history.get(key)
+    if arr is None:
+        return None
+    return arr[mask] if mask is not None else arr
+
+
+def _slip_axis_label(slip_source: str) -> str:
+    """Return a human-readable axis label for the given slip source."""
+    if slip_source == 'LVDT' or slip_source is None:
+        return 'LVDT slip [\u03bcm]'
+    return f'{str(slip_source).upper()} slip [\u03bcm]'
 
 
 # ------------------------------------------------------------------
@@ -153,7 +202,8 @@ def analyze_single_k(
     hp_freq = config.get('k_highpass_freq', 0.0)
     lp_freq = config.get('k_lowpass_freq', 0.0)
     use_ransac = config.get('k_use_ransac', False)
-    
+    slip_source = config.get('k_slip_source', 'LVDT')
+
     # Ensure window is wide enough for pre_start
     half_win = max(config.get('k_window_sec', 3.5), abs(k_pre_start) + 0.5)
 
@@ -169,6 +219,7 @@ def analyze_single_k(
             'highpass_freq': hp_freq,
             'lowpass_freq': lp_freq,
             'use_ransac': use_ransac,
+            'slip_source': slip_source,
         },
     }
 
@@ -202,21 +253,24 @@ def analyze_single_k(
     tau_proc = _process_signal(tau_raw, w, hp_freq, lp_freq, fs)
     tau_proc = tau_proc - tau_proc[0]
 
-    # Process LVDT
-    lvdt_raw = time_history['LP_displacement'][mask]
-    lvdt_proc = _process_signal(lvdt_raw, w, hp_freq, lp_freq, fs)
-    lvdt_proc = lvdt_proc - lvdt_proc[0]
+    # Process slip (LVDT or Eddy sensor)
+    slip_raw = _get_slip_array(time_history, slip_source, mask)
+    if slip_raw is None:
+        # Fallback to LVDT if requested channel is missing
+        slip_raw = time_history['LP_displacement'][mask]
+    slip_proc = _process_signal(slip_raw, w, hp_freq, lp_freq, fs)
+    slip_proc = slip_proc - slip_proc[0]
 
     # Extract locking window
     pre_mask = (t_rel >= k_pre_start) & (t_rel <= k_pre_end)
     if np.sum(pre_mask) > 5:
         tau_pre = tau_proc[pre_mask]
-        lvdt_pre = lvdt_proc[pre_mask]
+        slip_pre = slip_proc[pre_mask]
         try:
             if use_ransac:
-                coeffs = robust_fit_ransac(lvdt_pre, tau_pre)
+                coeffs = robust_fit_ransac(slip_pre, tau_pre)
             else:
-                coeffs = np.polyfit(lvdt_pre, tau_pre, 1)
+                coeffs = np.polyfit(slip_pre, tau_pre, 1)
             row['k']['value'] = coeffs[0]  # slope = stiffness
             row['k_coeffs'] = coeffs.tolist()
         except Exception:
@@ -257,9 +311,9 @@ def generate_k_diagnostic_plot(
     """
     Generate a 3-panel diagnostic figure for K analysis of one event.
 
-    Subplot 1: LVDT vs time (raw C0 + processed red)
+    Subplot 1: Slip (LVDT or Eddy sensor) vs time (raw C0 + processed red)
     Subplot 2: Shear stress vs time (raw C0 + processed red)
-    Subplot 3: Processed tau (Y) vs processed LVDT (X) with fit line
+    Subplot 3: Processed tau (Y) vs processed slip (X) with fit line
     """
     import matplotlib.pyplot as plt
 
@@ -273,6 +327,7 @@ def generate_k_diagnostic_plot(
     w = config.get('k_smooth_w', 100)
     hp_freq = config.get('k_highpass_freq', 0.0)
     lp_freq = config.get('k_lowpass_freq', 0.0)
+    slip_source = config.get('k_slip_source', 'LVDT')
     half_win = max(config.get('k_window_sec', 3.5), abs(k_pre_start) + 0.5)
 
     t_all = time_history['time']
@@ -292,10 +347,13 @@ def generate_k_diagnostic_plot(
     tau_raw_z = tau_raw - tau_raw[0]
     tau_proc_z = tau_proc - tau_proc[0]
 
-    lvdt_raw = time_history['LP_displacement'][mask]
-    lvdt_proc = _process_signal(lvdt_raw, w, hp_freq, lp_freq, fs)
-    lvdt_raw_z = lvdt_raw - lvdt_raw[0]
-    lvdt_proc_z = lvdt_proc - lvdt_proc[0]
+    slip_raw = _get_slip_array(time_history, slip_source, mask)
+    if slip_raw is None:
+        slip_raw = time_history['LP_displacement'][mask]
+    slip_proc = _process_signal(slip_raw, w, hp_freq, lp_freq, fs)
+    slip_raw_z = slip_raw - slip_raw[0]
+    slip_proc_z = slip_proc - slip_proc[0]
+    slip_ylabel = _slip_axis_label(slip_source)
 
     # Display time range: k_pre_start to abs(k_pre_start) (doubled forward)
     t_disp_start = k_pre_start
@@ -309,14 +367,14 @@ def generate_k_diagnostic_plot(
     ax3 = fig.add_subplot(gs[2, 0])
     ax_cbar = fig.add_subplot(gs[2, 1])
 
-    # --- Subplot 1: LVDT vs time ---
-    ax1.plot(t_rel[disp_mask], lvdt_raw_z[disp_mask], color='C0', alpha=0.5, lw=0.8, label='Raw')
-    ax1.plot(t_rel[disp_mask], lvdt_proc_z[disp_mask], color='red', alpha=0.6, lw=1.5, label='Processed')
+    # --- Subplot 1: Slip vs time ---
+    ax1.plot(t_rel[disp_mask], slip_raw_z[disp_mask], color='C0', alpha=0.5, lw=0.8, label='Raw')
+    ax1.plot(t_rel[disp_mask], slip_proc_z[disp_mask], color='red', alpha=0.6, lw=1.5, label='Processed')
     ax1.axvline(x=k_pre_start, color='blue', ls='--', alpha=0.5, lw=1)
     ax1.axvline(x=k_pre_end, color='blue', ls='--', alpha=0.5, lw=1)
     ax1.axvspan(k_pre_start, k_pre_end, alpha=0.08, color='blue')
-    ax1.set_ylabel('LVDT slip [\u03bcm]')
-    ax1.set_title(f'Event {event_idx} - K Stiffness Analysis')
+    ax1.set_ylabel(slip_ylabel)
+    ax1.set_title(f'Event {event_idx} - K Stiffness Analysis ({slip_source})')
     ax1.legend(loc='upper left', fontsize='small')
     ax1.grid(True)
 
@@ -331,13 +389,13 @@ def generate_k_diagnostic_plot(
     ax2.legend(loc='upper left', fontsize='small')
     ax2.grid(True)
 
-    # --- Subplot 3: Tau vs LVDT (processed, locking window only) ---
+    # --- Subplot 3: Tau vs slip (processed, locking window only) ---
     pre_mask = (t_rel >= k_pre_start) & (t_rel <= k_pre_end)
     if np.sum(pre_mask) > 5:
         tau_pre = tau_proc_z[pre_mask]
-        lvdt_pre = lvdt_proc_z[pre_mask]
+        slip_pre = slip_proc_z[pre_mask]
 
-        sc = ax3.scatter(lvdt_pre, tau_pre, c=t_rel[pre_mask], cmap='viridis', s=8, alpha=0.6, edgecolors='none', label='Data')
+        sc = ax3.scatter(slip_pre, tau_pre, c=t_rel[pre_mask], cmap='viridis', s=8, alpha=0.6, edgecolors='none', label='Data')
         cbar = fig.colorbar(sc, cax=ax_cbar)
         cbar.set_label('time relative [s]')
 
@@ -346,15 +404,15 @@ def generate_k_diagnostic_plot(
         if not np.isnan(k_val):
             k_coeffs = result.get('k_coeffs', None)
             if k_coeffs is not None:
-                fit_y = k_coeffs[0] * lvdt_pre + k_coeffs[1]
-                ax3.plot(lvdt_pre, fit_y, 'r-', lw=2,
+                fit_y = k_coeffs[0] * slip_pre + k_coeffs[1]
+                ax3.plot(slip_pre, fit_y, 'r-', lw=2,
                          label=fr'Fit: $k$ = {k_val:.4f} MPa/$\mu$m')
 
         ax3.legend(loc='best', fontsize='small')
     else:
         ax_cbar.set_visible(False)
 
-    ax3.set_xlabel('LVDT slip [\u03bcm]')
+    ax3.set_xlabel(slip_ylabel)
     ax3.set_ylabel(r'rel. $\tau$ [MPa]')
     ax3.set_title('Pre-Rupture Stiffness')
     ax3.grid(True)

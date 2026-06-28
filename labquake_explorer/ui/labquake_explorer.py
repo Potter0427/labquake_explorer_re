@@ -889,6 +889,16 @@ class LabquakeExplorer:
         ttk.Checkbutton(config_win, variable=ransac_var).grid(row=row, column=1, padx=5, pady=3, sticky='w')
         row += 1
 
+        ttk.Label(config_win, text="Slip source:").grid(row=row, column=0, padx=5, pady=3, sticky='w')
+        slip_source_var = tk.StringVar(value=cfg.get('k_slip_source', 'LVDT'))
+        slip_source_combo = ttk.Combobox(
+            config_win, textvariable=slip_source_var,
+            values=['LVDT', 'E1', 'E2', 'E3', 'E4', 'E5'],
+            state='readonly', width=8
+        )
+        slip_source_combo.grid(row=row, column=1, padx=5, pady=3, sticky='w')
+        row += 1
+
         def on_run():
             cfg['k_pre_start'] = float(entries['k_pre_start'].get())
             cfg['k_pre_end'] = float(entries['k_pre_end'].get())
@@ -896,6 +906,7 @@ class LabquakeExplorer:
             cfg['k_highpass_freq'] = float(entries['k_highpass_freq'].get())
             cfg['k_lowpass_freq'] = float(entries['k_lowpass_freq'].get())
             cfg['k_use_ransac'] = ransac_var.get()
+            cfg['k_slip_source'] = slip_source_var.get()
 
             # Auto-set window_sec to cover the full pre range
             cfg['k_window_sec'] = abs(cfg['k_pre_start']) + 0.5
@@ -914,7 +925,8 @@ class LabquakeExplorer:
                 'k_smooth_w': cfg['k_smooth_w'],
                 'k_highpass_freq': cfg['k_highpass_freq'],
                 'k_lowpass_freq': cfg.get('k_lowpass_freq', 0.0),
-                'k_use_ransac': cfg['k_use_ransac']
+                'k_use_ransac': cfg['k_use_ransac'],
+                'k_slip_source': cfg.get('k_slip_source', 'LVDT'),
             })
             # Persist skip_events to the shared run-level list (only user-entered ones)
             self.data_manager.save_run_skip_events(run_idx, list(cfg['skip_events']))
@@ -960,6 +972,7 @@ class LabquakeExplorer:
                     'k_highpass_freq': cfg['k_highpass_freq'],
                     'k_lowpass_freq': cfg.get('k_lowpass_freq', 0.0),
                     'k_use_ransac': cfg['k_use_ransac'],
+                    'k_slip_source': cfg.get('k_slip_source', 'LVDT'),
                     'skip_events': cfg['skip_events'],
                 })
                 # Remove legacy configs if they still exist in memory
