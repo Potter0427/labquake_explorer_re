@@ -89,7 +89,11 @@ class TimeHistoryView(tk.Toplevel):
         y_scroll.grid(row=0, column=1, sticky="ns")
         y_frame.grid_columnconfigure(0, weight=1)
 
-        ttk.Button(ctrl_frame, text="Plot", command=self.update_plot).grid(row=1, column=6, padx=15, pady=5)
+        # Zero Baseline checkbox
+        self.zero_baseline_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(ctrl_frame, text="Zero Baseline", variable=self.zero_baseline_var).grid(row=1, column=6, padx=10, pady=5)
+
+        ttk.Button(ctrl_frame, text="Plot", command=self.update_plot).grid(row=1, column=7, padx=15, pady=5)
 
         # Populate X combobox
         x_options = ['time'] + [f for f in self.plottable_fields if f != 'time']
@@ -114,6 +118,9 @@ class TimeHistoryView(tk.Toplevel):
 
         # Load global user preferences
         saved_config = UserPrefs.get('TimeHistoryView', 'config', {})
+
+        # Load Zero Baseline preference
+        self.zero_baseline_var.set(saved_config.get('zero_baseline', True))
 
         # Load X selection
         saved_x = saved_config.get('x_field', 'time')
@@ -183,11 +190,11 @@ class TimeHistoryView(tk.Toplevel):
                 return None
         return current
 
-    def _add_trigger_lines(self, ax, t_start, t_end):
+    def _add_trigger_lines(self, ax, t_start, t_end, t_offset=0.0):
         """Draw vertical trigger lines within the visible time range."""
         visible = self.trigger_times[(self.trigger_times >= t_start) & (self.trigger_times <= t_end)]
         for tr in visible:
-            ax.axvline(x=tr, color='gray', linestyle=':', alpha=0.4, linewidth=0.8)
+            ax.axvline(x=tr - t_offset, color='gray', linestyle=':', alpha=0.4, linewidth=0.8)
 
     def update_plot(self, event=None):
         selected_indices = self.y_listbox.curselection()
@@ -220,11 +227,16 @@ class TimeHistoryView(tk.Toplevel):
             t_end += 1.0
 
         mask = (t_all >= t_start) & (t_all <= t_end)
-        
+
+        zero_baseline = self.zero_baseline_var.get()
+
         # Get X data
         if x_field == 'time':
             x_data = t_all[mask]
+            t_offset = float(x_data[0]) if zero_baseline and len(x_data) > 0 else 0.0
+            x_data = x_data - t_offset
         else:
+            t_offset = 0.0
             x_data_full = self._get_data_by_path(x_field)
             if x_data_full is None:
                 return
@@ -268,12 +280,12 @@ class TimeHistoryView(tk.Toplevel):
                         # Pad edges if moving_average shortened the array
                         if len(y_val) < len(x_data):
                             y_val = np.pad(y_val, (0, len(x_data) - len(y_val)), 'edge')
-                        y_val = y_val - y_val[0]
-                        ax.plot(x_data, y_val, label=f'E{i+1}')
+                        if zero_baseline:
+                            y_val = y_val - y_val[0]
+                        ax.plot(x_data, y_val, label=f'E{i+1}', alpha=0.7)
                     if eddy_keys:
                         ax.legend(bbox_to_anchor=(1.01, 1), loc='upper left', fontsize='small', handletextpad=1.5, borderaxespad=1.0)
                         ax.set_ylabel('slip [μm]')
-                        ax.set_title('Eddy Current Sensors')
                 elif group_key == 'pressure':
                     w_p = 50
                     if 'mu' in self.time_history:
@@ -322,7 +334,7 @@ class TimeHistoryView(tk.Toplevel):
             ax.grid(True, linestyle='-', alpha=0.3)
 
             if x_field == 'time':
-                self._add_trigger_lines(ax, t_start, t_end)
+                self._add_trigger_lines(ax, t_start, t_end, t_offset)
 
         axes[-1].set_xlabel(x_field if x_field != 'time' else 'Time (s)')
 
@@ -345,7 +357,8 @@ class TimeHistoryView(tk.Toplevel):
             y_fields = [self.y_listbox.get(i) for i in selected_indices]
             config = {
                 'x_field': self.x_combo.get(),
-                'y_fields': y_fields
+                'y_fields': y_fields,
+                'zero_baseline': self.zero_baseline_var.get(),
             }
             UserPrefs.set('TimeHistoryView', 'config', config)
         except Exception as e:

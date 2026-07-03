@@ -291,7 +291,7 @@ class ColoredLinesView(tk.Toplevel):
         n_samples = max(2, int(self.sample_var.get()))
         n_samples = min(n_samples, len(t_mask))
         idxs   = np.linspace(0, len(t_mask) - 1, n_samples, dtype=int)
-        t_samp = t_mask[idxs]
+        t_samp = t_mask[idxs] - t_mask[0]
         d_samp = all_disp[:, idxs]   # shape: (n_channels, n_samples)
 
         # Colourmap normalised to time
