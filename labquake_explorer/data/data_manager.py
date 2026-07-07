@@ -453,7 +453,8 @@ class DataManager:
                                     del group[key]
                                 subgroup = group.create_group(key)
                             for i, item in enumerate(value):
-                                save_item(subgroup, str(i), item)
+                                item_key = f"{i:03d}" if key == 'events' else str(i)
+                                save_item(subgroup, item_key, item)
                     elif isinstance(value, str):
                         if not _needs_update(group, key, value):
                             return
@@ -524,14 +525,15 @@ class DataManager:
                 if events_path not in f:
                     events_group = f.create_group(events_path)
                     # Create 0th placeholder
-                    idx_0 = events_group.create_group('0')
+                    idx_0 = events_group.create_group('000')
                     idx_0.create_dataset('name', data=b'(No Data)')
                 else:
                     events_group = f[events_path]
                 
-                event_path = f"{events_path}/{event_idx}"
+                event_key = f"{event_idx:03d}"
+                event_path = f"{events_path}/{event_key}"
                 if event_path not in f:
-                    event_group = events_group.create_group(str(event_idx))
+                    event_group = events_group.create_group(event_key)
                 else:
                     event_group = f[event_path]
                 

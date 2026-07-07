@@ -580,6 +580,7 @@ class SummaryAnalysisView(tk.Toplevel):
                     has_data = True
             
             ax.set_yscale('log')
+            ax.set_ylim(1e-2, 3e5)
             ax.set_ylabel('Rate [\u03bcm/s]')
             self._add_trigger_lines(ax, t_plot_start, t_plot_end, t_offset, add_text=(active[0]=='slip_rate'))
 
