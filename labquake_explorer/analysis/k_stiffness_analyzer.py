@@ -36,13 +36,16 @@ DEFAULT_K_CONFIG = {
 # Slip source helper
 # ------------------------------------------------------------------
 
-# Mapping: E1 -> eddy_ch8, E2 -> eddy_ch9, ..., E5 -> eddy_ch12
+# Mapping fallback: E1 -> eddy_ch8, ..., E8 -> eddy_ch15
 _EDDY_CHANNEL_MAP = {
     'E1': 'eddy_ch8',
     'E2': 'eddy_ch9',
     'E3': 'eddy_ch10',
     'E4': 'eddy_ch11',
     'E5': 'eddy_ch12',
+    'E6': 'eddy_ch13',
+    'E7': 'eddy_ch14',
+    'E8': 'eddy_ch15',
 }
 
 
@@ -57,7 +60,7 @@ def _get_slip_array(
     Parameters
     ----------
     time_history : dict
-    slip_source  : 'LVDT' | 'E1' | 'E2' | 'E3' | 'E4' | 'E5'
+    slip_source  : 'LVDT' | 'E1' .. 'E8'
     mask         : optional boolean index array
 
     Returns None if the requested channel is absent.
@@ -65,7 +68,20 @@ def _get_slip_array(
     if slip_source == 'LVDT' or slip_source is None:
         key = 'LP_displacement'
     else:
-        key = _EDDY_CHANNEL_MAP.get(str(slip_source).upper(), 'LP_displacement')
+        src_upper = str(slip_source).upper()
+        # 動態尋找 time_history 中現有的 eddy_ch 鍵值並排序對應 (支援 1D/2D 通道差異)
+        eddy_keys = sorted([k for k in time_history.keys() if k.startswith('eddy_ch')])
+        if not eddy_keys:
+            eddy_keys = sorted([k for k in time_history.keys() if 'eddy' in k.lower()])
+            
+        if src_upper.startswith('E') and src_upper[1:].isdigit():
+            idx = int(src_upper[1:]) - 1
+            if 0 <= idx < len(eddy_keys):
+                key = eddy_keys[idx]
+            else:
+                key = _EDDY_CHANNEL_MAP.get(src_upper, 'LP_displacement')
+        else:
+            key = _EDDY_CHANNEL_MAP.get(src_upper, 'LP_displacement')
 
     arr = time_history.get(key)
     if arr is None:

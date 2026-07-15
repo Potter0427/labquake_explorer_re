@@ -169,7 +169,7 @@ class EventKEditorView(tk.Toplevel):
 
         # Slip source selector
         ttk.Label(ctrl, text="Slip source:").grid(row=0, column=20, padx=5)
-        slip_sources = ['LVDT', 'E1', 'E2', 'E3', 'E4', 'E5']
+        slip_sources = ['LVDT', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7', 'E8']
         self.slip_source_var = tk.StringVar(value=self.config.get('k_slip_source', 'LVDT'))
         self.slip_source_combo = ttk.Combobox(
             ctrl, textvariable=self.slip_source_var,

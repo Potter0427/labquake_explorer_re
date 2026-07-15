@@ -20,8 +20,9 @@ class ColoredLinesView(tk.Toplevel):
     Y-axis: slip / displacement relative to event-range start (μm).
     """
 
-    # Sensor positions in mm (same order as sorted eddy_* keys)
-    DEFAULT_POSITIONS = [50, 150, 250, 350, 450]
+    # Sensor positions in mm (dynamically retrieved based on channel count)
+    from labquake_explorer.utils.config import LabquakeExplorerConfig
+    DEFAULT_POSITIONS = LabquakeExplorerConfig.EDDY_POSITIONS_5CH_MM
 
     def __init__(self, parent, run_idx, path):
         self.parent = parent
@@ -56,14 +57,10 @@ class ColoredLinesView(tk.Toplevel):
             self.destroy()
             return
 
-        # Assign sensor positions (use defaults, trimmed/padded to match key count)
+        # Assign sensor positions dynamically based on channel count (backward compatible)
         n_keys = len(self.eddy_keys)
-        if n_keys <= len(self.DEFAULT_POSITIONS):
-            self.positions = np.array(self.DEFAULT_POSITIONS[:n_keys])
-        else:
-            step = self.DEFAULT_POSITIONS[1] - self.DEFAULT_POSITIONS[0]
-            start = self.DEFAULT_POSITIONS[0]
-            self.positions = np.array([start + i * step for i in range(n_keys)])
+        from labquake_explorer.utils.config import LabquakeExplorerConfig
+        self.positions = np.array(LabquakeExplorerConfig.get_eddy_positions(n_keys))
 
         # Figure state
         self.figure = None

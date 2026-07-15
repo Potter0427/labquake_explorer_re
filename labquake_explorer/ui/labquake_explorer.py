@@ -522,6 +522,9 @@ class LabquakeExplorer:
         except Exception:
             pass
 
+        old_global_pre = tuple(cfg['pre_win'])
+        old_global_post = tuple(cfg['post_win'])
+
         row = 0
         entries = {}
         for label, key, default in [
@@ -545,6 +548,14 @@ class LabquakeExplorer:
         initial_skip = ",".join(map(str, [x for x in cfg.get("skip_events", []) if x != 0]))
         skip_var = tk.StringVar(value=initial_skip)
         ttk.Entry(config_win, textvariable=skip_var, width=60).grid(row=row, column=1, padx=5, pady=3)
+        row += 1
+
+        force_apply_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            config_win,
+            text="Apply global window to all selected events (override per-event adjustments)",
+            variable=force_apply_var
+        ).grid(row=row, column=0, columnspan=2, padx=5, pady=3, sticky='w')
         row += 1
 
         # --- Compute flags ---
@@ -646,9 +657,9 @@ class LabquakeExplorer:
             config_win.destroy()
 
             compute_flags = {k: v.get() for k, v in flag_vars.items()}
+            force_apply = force_apply_var.get()
 
-            # Rebuild per_event_windows from saved per-event pts stored in each event dict.
-            # This ensures windows individually adjusted in EventDropEditor are respected.
+            # Rebuild per_event_windows only for individually customized windows (or keep empty if force_apply is checked).
             def _valid_pts(d):
                 if not isinstance(d, dict): return False
                 if 'pre_start' not in d: return False
@@ -656,21 +667,35 @@ class LabquakeExplorer:
                 pts = [d.get('pre_start'), d.get('pre_end'), d.get('post_start'), d.get('post_end')]
                 return all(x is not None and not (isinstance(x, float) and math.isnan(x)) for x in pts)
 
+            def _is_custom_pts(pts, old_pre, old_post):
+                if not pts or len(pts) != 4: return False
+                if abs(pts[0] - old_pre[0]) > 1e-3 or abs(pts[1] - old_pre[1]) > 1e-3 or \
+                   abs(pts[2] - old_post[0]) > 1e-3 or abs(pts[3] - old_post[1]) > 1e-3:
+                    return True
+                return False
+
             pew = {}
-            for ev_idx, ev in enumerate(events):
-                if not isinstance(ev, dict): continue
-                entry = {}
-                if 'tau' in ev and _valid_pts(ev['tau']):
-                    td = ev['tau']
-                    entry['tau_pts'] = [td['pre_start'], td['pre_end'], td['post_start'], td['post_end']]
-                if 'delta' in ev and _valid_pts(ev['delta']):
-                    sd = ev['delta']
-                    entry['slip_pts'] = [sd['pre_start'], sd['pre_end'], sd['post_start'], sd['post_end']]
-                if 'lvdt' in ev and _valid_pts(ev['lvdt']):
-                    ld = ev['lvdt']
-                    entry['lvdt_pts'] = [ld['pre_start'], ld['pre_end'], ld['post_start'], ld['post_end']]
-                if entry:
-                    pew[ev_idx] = entry
+            if not force_apply:
+                for ev_idx, ev in enumerate(events):
+                    if not isinstance(ev, dict): continue
+                    entry = {}
+                    if 'tau' in ev and _valid_pts(ev['tau']):
+                        td = ev['tau']
+                        pts = [td['pre_start'], td['pre_end'], td['post_start'], td['post_end']]
+                        if _is_custom_pts(pts, old_global_pre, old_global_post):
+                            entry['tau_pts'] = pts
+                    if 'delta' in ev and _valid_pts(ev['delta']):
+                        sd = ev['delta']
+                        pts = [sd['pre_start'], sd['pre_end'], sd['post_start'], sd['post_end']]
+                        if _is_custom_pts(pts, old_global_pre, old_global_post):
+                            entry['slip_pts'] = pts
+                    if 'lvdt' in ev and _valid_pts(ev['lvdt']):
+                        ld = ev['lvdt']
+                        pts = [ld['pre_start'], ld['pre_end'], ld['post_start'], ld['post_end']]
+                        if _is_custom_pts(pts, old_global_pre, old_global_post):
+                            entry['lvdt_pts'] = pts
+                    if entry:
+                        pew[ev_idx] = entry
             cfg['per_event_windows'] = pew
 
             # Run analysis

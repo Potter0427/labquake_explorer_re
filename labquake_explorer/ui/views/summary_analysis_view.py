@@ -587,8 +587,9 @@ class SummaryAnalysisView(tk.Toplevel):
         # --- (9) Heatmap ---
         if 'heatmap' in self.axs_map:
             ax = self.axs_map['heatmap']
+            from labquake_explorer.utils.config import LabquakeExplorerConfig
             eddy_keys = sorted([k for k in self.time_history.keys() if k.startswith('eddy_ch')])
-            positions = np.array([50, 150, 250, 350, 450])
+            positions = np.array(LabquakeExplorerConfig.get_eddy_positions(len(eddy_keys)))
             
             if len(t_plot) > 1 and len(eddy_keys) == len(positions):
                 # Build heatmap matrix by interpolating sparse slip rate data onto common time grid

@@ -23,14 +23,14 @@ data['runs'][run_idx]['events'][event_idx]        # dict — single event (1-bas
 - `shear_pressure` — raw shear (MPa)
 - `tau_local` — area-corrected shear (MPa); may not exist in older files
 - `LP_displacement` — LVDT displacement (μm)
-- `eddy_ch8` … `eddy_ch12` — Eddy current sensor channels (μm); 5 channels total
+- `eddy_ch8` … `eddy_ch15` — Eddy current sensor channels (μm); up to 8 channels (`eddy_ch11` … `eddy_ch18` in 1D experiments)
 
 ### 2.3 `events[event_idx]` Fields
 - `event_time` — trigger timestamp (s)
 - `skipped` — `'YES'` / `True` / `1` if this event is excluded from analysis
 - `tau` — dict: `{value, pre_start, pre_end, post_start, post_end, smooth_w}`
 - `delta` — dict with eddy slip drops:
-  - `E1_value` … `E5_value` — slip drop (μm) for each Eddy sensor (1-based index, corresponding to `eddy_ch8` … `eddy_ch12` in order)
+  - `E1_value` … `E8_value` — slip drop (μm) for each Eddy sensor (1-based index, corresponding to `eddy_ch8` … `eddy_ch15` in order)
   - `pre_start`, `pre_end`, `post_start`, `post_end` — window boundaries used for the 2-pt trend calculation
 - `lvdt` — dict: `{value, pre_start, pre_end, post_start, post_end, smooth_w}`
 - `D_Push`, `D_max`, `D_E3` — inter-event displacement metrics (μm)
@@ -40,9 +40,10 @@ data['runs'][run_idx]['events'][event_idx]        # dict — single event (1-bas
 These spatial constants are required for any visualization (Slip Profile, Colored Lines, Heatmap).
 
 ### 3.1 Eddy Sensor Positions
-The 5 Eddy current sensors are fixed along the fault at:
+The Eddy current sensors are fixed along the fault at:
 ```
-[50, 150, 250, 350, 450]  mm   (E1 → E5, i.e. eddy_ch8 → eddy_ch12)
+[31, 93, 155, 217, 279, 341, 403, 465]  mm   (8-channel configuration: E1 → E8, interval = 62 mm)
+[50, 150, 250, 350, 450]  mm                  (5-channel legacy configuration: E1 → E5)
 ```
 
 ### 3.2 Velocity-Weakening (VW) Zone

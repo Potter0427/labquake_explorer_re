@@ -37,78 +37,33 @@ def compute_half_win(config: dict) -> float:
     # Round up so that total span = 2*half_win is a multiple of 3
     return math.ceil(2 * base / 3) * 1.5
 
-
 def calculate_2pt_trend_drop(
     t_rel: np.ndarray,
     y: np.ndarray,
     pts: Tuple[float, float, float, float],
 ) -> Dict[str, Any]:
     """
-    Compute drop using exactly 2 points before and 2 points after the trigger.
-    pts = (x_pre1, x_pre2, x_post1, x_post2)
+    Deprecated: previously computed two-point extrapolation.
+    Now redirects to calculate_trend_drop to enforce two-window linear least-squares extrapolation (雙區間線性外插法).
     """
-    result: Dict[str, Any] = {'valid': False}
-    
-    x_pre1, x_pre2, x_post1, x_post2 = pts
-    
-    # Ensure x values are within the time array bounds to avoid errors, or just find nearest
-    try:
-        idx_pre1 = np.argmin(np.abs(t_rel - x_pre1))
-        idx_pre2 = np.argmin(np.abs(t_rel - x_pre2))
-        idx_post1 = np.argmin(np.abs(t_rel - x_post1))
-        idx_post2 = np.argmin(np.abs(t_rel - x_post2))
-        
-        y_pre1 = y[idx_pre1]
-        y_pre2 = y[idx_pre2]
-        y_post1 = y[idx_post1]
-        y_post2 = y[idx_post2]
-        
-        # Real x values found in the array (closer to what's plotted)
-        rx_pre1, rx_pre2 = t_rel[idx_pre1], t_rel[idx_pre2]
-        rx_post1, rx_post2 = t_rel[idx_post1], t_rel[idx_post2]
-        
-        # Avoid division by zero
-        if rx_pre2 == rx_pre1:
-            m_pre, b_pre = 0.0, y_pre1
-        else:
-            m_pre = (y_pre2 - y_pre1) / (rx_pre2 - rx_pre1)
-            b_pre = y_pre1 - m_pre * rx_pre1
-            
-        if rx_post2 == rx_post1:
-            m_post, b_post = 0.0, y_post1
-        else:
-            m_post = (y_post2 - y_post1) / (rx_post2 - rx_post1)
-            b_post = y_post1 - m_post * rx_post1
-            
-        result.update({
-            'valid': True,
-            'coeff_pre': [m_pre, b_pre],
-            'coeff_post': [m_post, b_post],
-            'delta': b_pre - b_post,
-            'val_pre_0': b_pre,
-            'val_post_0': b_post,
-        })
-    except Exception:
-        pass
-        
-    return result
+    return calculate_trend_drop(t_rel, y, pts)
+
 
 def calculate_trend_drop(
     t_rel: np.ndarray,
     y: np.ndarray,
-    pre_win: Tuple[float, float],
-    post_win: Tuple[float, float],
+    *args,
 ) -> Dict[str, Any]:
     """
     Fit a linear trend on the pre-trigger window and the post-trigger
-    window, then compute the jump (delta) at t=0.
+    window using least-squares linear regression (雙區間線性外插法), then compute the jump (delta) at t=0.
 
     Parameters
     ----------
     t_rel : 1-D array of time relative to trigger (trigger = 0).
     y : 1-D signal array (same length as t_rel).
-    pre_win : (start, end) for the pre-trigger fitting segment.
-    post_win : (start, end) for the post-trigger fitting segment.
+    args : either a single 4-tuple pts = (pre_start, pre_end, post_start, post_end)
+           or two 2-tuples (pre_win, post_win).
 
     Returns
     -------
@@ -116,20 +71,32 @@ def calculate_trend_drop(
         valid      – bool
         coeff_pre  – (slope, intercept) of pre-window fit
         coeff_post – (slope, intercept) of post-window fit
-        delta      – val_pre_at_0 - val_post_at_0  (signed)
+        delta      – val_pre_0 - val_post_0  (signed)
         val_pre_0  – pre-fit value at t=0
-        val_post_0 – post-fit value at t=0
+        val_post_0  – post-fit value at t=0
     """
-    mask_pre = (t_rel >= pre_win[0]) & (t_rel <= pre_win[1])
-    mask_post = (t_rel >= post_win[0]) & (t_rel <= post_win[1])
     result: Dict[str, Any] = {'valid': False}
 
-    if np.sum(mask_pre) > 5 and np.sum(mask_post) > 5:
+    if len(args) == 1 and len(args[0]) == 4:
+        pre_win = (args[0][0], args[0][1])
+        post_win = (args[0][2], args[0][3])
+    elif len(args) == 2:
+        pre_win, post_win = args[0], args[1]
+    else:
+        return result
+
+    pre_start, pre_end = min(pre_win[0], pre_win[1]), max(pre_win[0], pre_win[1])
+    post_start, post_end = min(post_win[0], post_win[1]), max(post_win[0], post_win[1])
+
+    mask_pre = (t_rel >= pre_start) & (t_rel <= pre_end)
+    mask_post = (t_rel >= post_start) & (t_rel <= post_end)
+
+    if np.sum(mask_pre) >= 2 and np.sum(mask_post) >= 2:
         try:
             coeff_pre = np.polyfit(t_rel[mask_pre], y[mask_pre], 1)
             coeff_post = np.polyfit(t_rel[mask_post], y[mask_post], 1)
-            val_pre_0 = np.polyval(coeff_pre, 0)
-            val_post_0 = np.polyval(coeff_post, 0)
+            val_pre_0 = float(np.polyval(coeff_pre, 0))
+            val_post_0 = float(np.polyval(coeff_post, 0))
             result.update({
                 'valid': True,
                 'coeff_pre': coeff_pre,
@@ -297,7 +264,7 @@ def analyze_single_event(
             tau_sm = np.pad(tau_sm, (0, len(t_rel) - len(tau_sm)), 'edge')
         tau_sm = tau_sm - tau_sm[0]
 
-        res_tau = calculate_2pt_trend_drop(t_rel, tau_sm, tau_pts)
+        res_tau = calculate_trend_drop(t_rel, tau_sm, tau_pts)
         row['tau']['value'] = abs(res_tau['delta']) if res_tau['valid'] else np.nan
         row['tau_res'] = res_tau  # keep full result for plotting
 
@@ -309,7 +276,7 @@ def analyze_single_event(
             mu_sm = np.pad(mu_sm, (0, len(t_rel) - len(mu_sm)), 'edge')
         mu_sm = mu_sm - mu_sm[0]
 
-        res_mu = calculate_2pt_trend_drop(t_rel, mu_sm, tau_pts)
+        res_mu = calculate_trend_drop(t_rel, mu_sm, tau_pts)
         row['delta_mu'] = abs(res_mu['delta']) if res_mu['valid'] else np.nan
         row['mu_res'] = res_mu  # keep full result for plotting
 
@@ -318,7 +285,7 @@ def analyze_single_event(
         eddy_keys = sorted([k for k in time_history.keys() if 'eddy' in k.lower()])
         for i, k in enumerate(eddy_keys):
             d = time_history[k][mask] - time_history[k][mask][0]
-            res_slip = calculate_2pt_trend_drop(t_rel, d, slip_pts)
+            res_slip = calculate_trend_drop(t_rel, d, slip_pts)
             row['delta'][f'E{i+1}_value'] = abs(res_slip['delta']) if res_slip['valid'] else np.nan
             row[f'delta_E{i+1}_res'] = res_slip
 
@@ -332,7 +299,7 @@ def analyze_single_event(
             lvdt_sm = np.pad(lvdt_sm, (0, len(t_rel) - len(lvdt_sm)), 'edge')
         lvdt_0 = lvdt_sm - lvdt_sm[0]
 
-        res_lvdt = calculate_2pt_trend_drop(t_rel, lvdt_0, lvdt_pts)
+        res_lvdt = calculate_trend_drop(t_rel, lvdt_0, lvdt_pts)
         row['lvdt']['value'] = abs(res_lvdt['delta']) if res_lvdt['valid'] else np.nan
         row['lvdt_res'] = res_lvdt
 

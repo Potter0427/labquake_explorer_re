@@ -148,10 +148,25 @@ class LabQuakeAnalyzer:
             intercept = self.p_intercept * 0.1 * (num_cylinders * cylinder_area / self.fault_area)
             return (slope, intercept)
 
+        # 動態檢查 tpc5 檔案內實際可用的通道，同時自適應 5 通道舊檔與 8 通道新檔
+        avail_chs = []
+        try:
+            with TPC5DataProcessor(self.filename) as proc:
+                avail_chs = proc.get_available_channels()
+        except Exception:
+            pass
+
+        if avail_chs:
+            eddy_chs = [c for c in range(11, 19) if c in avail_chs]
+            if not eddy_chs:
+                eddy_chs = range(11, 16)
+        else:
+            eddy_chs = range(11, 16)
+
         self.params = {
             'pzt_chs': range(1, 5),
             'sigma_ch': 8, 'tau_ch': 9,
-            'lvdt_ch': 10, 'eddy_chs': range(11, 16),
+            'lvdt_ch': 10, 'eddy_chs': eddy_chs,
             'sigma_cal': get_cal_params(cylinder_area=rsm500, num_cylinders=3),
             'tau_cal': get_cal_params(cylinder_area=rsm1000, num_cylinders=1),
             'eddy_cal': -95.0,
@@ -161,6 +176,14 @@ class LabQuakeAnalyzer:
 
     def _read_raw(self, ch, block):
         with TPC5DataProcessor(self.filename) as proc:
+            avail_blocks = proc.get_available_blocks(ch)
+            if block not in avail_blocks:
+                if 1 in avail_blocks:
+                    block = 1
+                elif avail_blocks:
+                    block = avail_blocks[0]
+                else:
+                    raise KeyError(f"Channel {ch} has no available blocks in {self.filename}")
             data = proc.get_voltage_data(ch, block)
             info = proc.get_block_info(ch, block)
             fs = info["sample_rate_hz"]
@@ -184,8 +207,11 @@ class LabQuakeAnalyzer:
             shear_psi = shear_bar * 14.5038
             val = (tau, shear_bar, shear_psi)
         elif ch == self.params['lvdt_ch'] or ch in self.params['eddy_chs']:
-            base_raw, _, _ = self._read_raw(ch, baseline_block)
-            base_volt = np.mean(base_raw) if len(base_raw) > 0 else raw_data[0]
+            try:
+                base_raw, _, _ = self._read_raw(ch, baseline_block)
+                base_volt = np.mean(base_raw) if len(base_raw) > 0 else raw_data[0]
+            except Exception:
+                base_volt = np.mean(raw_data[:min(1000, len(raw_data))]) if len(raw_data) > 0 else 0.0
             factor = self.params['lvdt_cal'] if ch == self.params['lvdt_ch'] else self.params['eddy_cal']
             val = (raw_data - base_volt) * factor
         else:
@@ -213,7 +239,7 @@ class LabQuakeAnalyzer:
         threshold: threshold_sampling 的位移閾值
         dt_max: threshold_sampling 的最大時間間隔
         lowpass_fc: 低通濾波截止頻率 (Hz)
-        通道配置：sigma_ch=8, tau_ch=9, lvdt_ch=10, eddy_chs=11~15
+        通道配置：sigma_ch=8, tau_ch=9, lvdt_ch=10, eddy_chs=11~18
         油壓缸：RSM500×3 (正向力), RSM1000×1 (剪力)
         """
         output_h5 = f"{experiment_name}.h5"
@@ -278,21 +304,30 @@ class LabQuakeAnalyzer:
                     th_group.create_dataset(f'sliprate_ch{ch}', data=rate[mask_v])
                     th_group.create_dataset(f't_sliprate_ch{ch}', data=np.array(t_dec)[mask_v])
                 
-            # 高取樣 Block 的事件速率
+            # 高取樣 Block 的事件速率 (存入子目錄以防 UI 樹狀圖太亂)
             hr_group = th_group.create_group("high_rate_sliprates")
-            for block in all_blocks:
-                if block == 1:
-                    continue
-                t_b, _ = self.get_physical_data(self.params['sigma_ch'], block)
-                for ch in self.params['eddy_chs']:
-                    _, slip = self.get_physical_data(ch, block, baseline_block=baseline_block)
-                    s_lp, _ = SignalUtils.lowpass(slip, t_b, fc=lowpass_fc)
-                    u_dec, t_dec = SignalUtils.threshold_sampling(s_lp, t_b, threshold=threshold, dt_max=dt_max)
-                    if len(u_dec) > 1:
-                        rate_b = np.abs(np.gradient(u_dec, t_dec))
-                        mask_v = rate_b > 1e-2
-                        hr_group.create_dataset(f'high_sliprate_ch{ch}_blk{block}', data=rate_b[mask_v])
-                        hr_group.create_dataset(f't_high_sliprate_ch{ch}_blk{block}', data=np.array(t_dec)[mask_v])
+            with TPC5DataProcessor(self.filename) as proc:
+                for block in all_blocks:
+                    if block == 1:
+                        continue
+                    try:
+                        t_b, _ = self.get_physical_data(self.params['sigma_ch'], block)
+                    except Exception:
+                        continue
+                    for ch in self.params['eddy_chs']:
+                        if block not in proc.get_available_blocks(ch):
+                            continue
+                        try:
+                            _, slip = self.get_physical_data(ch, block, baseline_block=baseline_block)
+                        except Exception:
+                            continue
+                        s_lp, _ = SignalUtils.lowpass(slip, t_b, fc=lowpass_fc)
+                        u_dec, t_dec = SignalUtils.threshold_sampling(s_lp, t_b, threshold=threshold, dt_max=dt_max)
+                        if len(u_dec) > 1:
+                            rate_b = np.abs(np.gradient(u_dec, t_dec))
+                            mask_v = rate_b > 1e-2
+                            hr_group.create_dataset(f'high_sliprate_ch{ch}_blk{block}', data=rate_b[mask_v])
+                            hr_group.create_dataset(f't_high_sliprate_ch{ch}_blk{block}', data=np.array(t_dec)[mask_v])
                 
             # pressure
             th_group.create_dataset('normal_pressure', data=sigma[0])

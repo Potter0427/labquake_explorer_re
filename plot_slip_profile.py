@@ -32,7 +32,8 @@ from tkinter import Tk, filedialog, simpledialog, messagebox
 # ─────────────────────────────────────────────
 # 常數設定
 # ─────────────────────────────────────────────
-SENSOR_POSITIONS_MM = [50, 150, 250, 350, 450]   # mm，沿斷層方向
+from labquake_explorer.utils.config import LabquakeExplorerConfig
+SENSOR_POSITIONS_MM = LabquakeExplorerConfig.EDDY_POSITIONS_5CH_MM   # legacy default
 VW_CENTER_MM = 250.0                              # VW zone 中心（fault 中心）
 VW_COLOR = '#FFD700'                              # 黃色（與 colored_lines_view 一致）
 VW_ALPHA = 0.35
@@ -220,10 +221,10 @@ def plot_slip_profile(data: dict, run_idx: int, event_idx: int):
         n_sensors = 0
 
     if n_sensors == 0:
-        # Fallback：使用預設 5 個
-        n_sensors = 5
+        # Fallback：若未能自 delta 偵測到數量，預設為 8 個
+        n_sensors = 8
 
-    positions = SENSOR_POSITIONS_MM[:n_sensors]
+    positions = LabquakeExplorerConfig.get_eddy_positions(n_sensors)
     slips = get_slip_profile(events, event_idx, n_sensors)
 
     # ── 取得實驗名稱（用來解析 VW zone）──

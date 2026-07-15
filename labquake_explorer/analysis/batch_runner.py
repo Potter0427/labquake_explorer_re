@@ -136,9 +136,9 @@ def generate_diagnostic_plot(
     ax1.grid(True)
 
     # --- (2) Slip ---
+    from labquake_explorer.utils.config import LabquakeExplorerConfig
     eddy_keys = sorted([k for k in time_history.keys() if 'eddy' in k.lower()])
-    eddy_colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple',
-                   'tab:brown', 'tab:pink', 'tab:gray', 'tab:olive', 'tab:cyan']
+    eddy_colors = LabquakeExplorerConfig.EDDY_COLORS
     
     # Target only E3 (3rd channel) for arrows
     target_idx = 2 if len(eddy_keys) >= 3 else (0 if len(eddy_keys) > 0 else -1)
