@@ -517,7 +517,9 @@ class SummaryAnalysisView(tk.Toplevel):
                 for i, k in enumerate(eddy_keys):
                     e_0 = self.time_history[k][mask] - self.time_history[k][mask][0]
                     diff = e_0 - lvdt_0
-                    ax.plot(t_plot, diff, f'C{i}', alpha=0.7)
+                    ax.plot(t_plot, diff, f'C{i}', alpha=0.7, label=f'E{i+1}')
+                if eddy_keys:
+                    ax.legend(bbox_to_anchor=(1.01, 1), loc='upper left', fontsize='small', handletextpad=1.5, borderaxespad=1.0)
             ax.set_ylabel('Eddy-LVDT [μm]')
             self._add_trigger_lines(ax, t_plot_start, t_plot_end, t_offset, add_text=(active[0]=='eddy_lvdt'))
 
@@ -576,9 +578,11 @@ class SummaryAnalysisView(tk.Toplevel):
                     idx_sort = np.argsort(combined_t)
                     # Plot with very thin line to keep background and spikes distinguishable
                     ax.plot(combined_t[idx_sort], combined_r[idx_sort], 
-                            color=f'C{i}', alpha=0.7)
+                            color=f'C{i}', alpha=0.7, label=f'E{i+1}')
                     has_data = True
             
+            if has_data:
+                ax.legend(bbox_to_anchor=(1.01, 1), loc='upper left', fontsize='small', handletextpad=1.5, borderaxespad=1.0)
             ax.set_yscale('log')
             ax.set_ylim(1e-2, 3e5)
             ax.set_ylabel('Rate [\u03bcm/s]')
