@@ -23,7 +23,7 @@ def export_h5_to_csv(h5_path: str):
         # 定義匯出欄位順序
         ordered_keys = ['event_time', 'k', 'delta_tau', 'delta_mu',
                         'delta_E1', 'delta_E2', 'delta_E3', 'delta_E4', 'delta_E5',
-                        'delta_lvdt', 'D_Push', 'D_max', 'D_E3']
+                        'delta_lvdt', 'D_Push', 'D_max', 'D_E3', 'D_E4']
 
         all_rows = []
 
@@ -74,7 +74,7 @@ def export_h5_to_csv(h5_path: str):
                                 if ch_val in ev_grp['delta']: val = ev_grp['delta'][ch_val][()]
                         elif k == 'delta_lvdt':
                             if 'lvdt' in ev_grp and 'value' in ev_grp['lvdt']: val = ev_grp['lvdt']['value'][()]
-                        elif k in ['delta_mu', 'D_Push', 'D_max', 'D_E3']:
+                        elif k in ['delta_mu', 'D_Push', 'D_max', 'D_E3', 'D_E4']:
                             if k in ev_grp: val = ev_grp[k][()]
                     except Exception:
                         pass

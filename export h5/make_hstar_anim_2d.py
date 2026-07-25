@@ -71,9 +71,17 @@ def update(frame_idx):
     h_label.set_text(r'$\boldsymbol{h}^{\boldsymbol{*}}$ = ' + f'{h_star:.2f} cm')
     h_label.set_position((center_x, center_y + max(h_star, R) + 1.0))
     # Update sigma text
-    sigma_text.set_text(rf'$\sigma_n$ = {sigma:.1f} MPa')
+    sigma_text.set_text(rf'$\sigma$ = {sigma:.1f} MPa')
     return [h_star_circle, h_label, sigma_text, h_arrow]
-ani = animation.FuncAnimation(fig, update, frames=len(sigma_range),
+fps = 15
+pause_start_frames = int(0.5 * fps)
+pause_end_frames = int(1.0 * fps)
+frame_indices = (
+    [0] * pause_start_frames +
+    list(range(len(sigma_range))) +
+    [len(sigma_range) - 1] * pause_end_frames
+)
+ani = animation.FuncAnimation(fig, update, frames=frame_indices,
                               blit=False, interval=80, repeat=True)
 save_dir = r'c:\experiment\labquake_explorer_re\export h5'
 save_path = os.path.join(save_dir, 'h_star_2d_animation.gif')

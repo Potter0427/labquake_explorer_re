@@ -127,12 +127,20 @@ def update(frame_idx):
     h_label.set_text(r'$\boldsymbol{h}^{\boldsymbol{*}}$ = ' + f'{h_star:.2f} cm')
 
     # Update sigma text
-    sigma_text.set_text(rf'$\sigma_n$ = {sigma:.1f} MPa')
+    sigma_text.set_text(rf'$\sigma$ = {sigma:.1f} MPa')
 
     return [h_star_patch, h_label, sigma_text]
 
 
-ani = animation.FuncAnimation(fig, update, frames=len(sigma_range),
+fps = 15
+pause_start_frames = int(0.5 * fps)
+pause_end_frames = int(1.0 * fps)
+frame_indices = (
+    [0] * pause_start_frames +
+    list(range(len(sigma_range))) +
+    [len(sigma_range) - 1] * pause_end_frames
+)
+ani = animation.FuncAnimation(fig, update, frames=frame_indices,
                               blit=False, interval=80, repeat=True)
 
 save_dir = r'c:\experiment\labquake_explorer_re\export h5'

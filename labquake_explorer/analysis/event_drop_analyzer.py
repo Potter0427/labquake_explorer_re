@@ -230,6 +230,7 @@ def analyze_single_event(
         'D_Push': np.nan,
         'D_max': np.nan,
         'D_E3': np.nan,
+        'D_E4': np.nan,
     }
     
     for i in range(len(eddy_keys)):
@@ -326,7 +327,7 @@ def analyze_single_event(
                 dt = t_trig - t_trig_prev
                 row['D_Push'] = dt * push_speed
 
-                # D_max (LVDT) and D_E3 (Eddy)
+                # D_max (LVDT)
                 lvdt_all = time_history['LP_displacement']
                 lvdt_all_sm = moving_average(lvdt_all, config.get('lvdt_smooth_w', 100))
 
@@ -334,14 +335,12 @@ def analyze_single_event(
                 idx_prev = np.argmin(np.abs(t_all - (t_trig_prev + delay_sec)))
                 row['D_max'] = abs(lvdt_all_sm[idx_curr] - lvdt_all_sm[idx_prev])
 
-                # D_E3: use 3rd eddy channel if available
-                if len(eddy_keys) >= 3:
-                    target_key = eddy_keys[2]
-                else:
-                    target_key = eddy_keys[0] if eddy_keys else None
-
-                if target_key:
-                    eddy_data = time_history[target_key]
+                # For 8 channels, use E4. For 5 channels (or <8), use E3.
+                if len(eddy_keys) >= 8:
+                    eddy_data = time_history[eddy_keys[3]]
+                    row['D_E4'] = abs(eddy_data[idx_curr] - eddy_data[idx_prev])
+                elif len(eddy_keys) >= 3:
+                    eddy_data = time_history[eddy_keys[2]]
                     row['D_E3'] = abs(eddy_data[idx_curr] - eddy_data[idx_prev])
 
     return row

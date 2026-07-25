@@ -202,7 +202,7 @@ class DataManager:
                         ev['lvdt']['value'] = results.get('delta_lvdt', [np.nan]*n_results)[i]
                         ev['lvdt']['pre_start'], ev['lvdt']['pre_end'], ev['lvdt']['post_start'], ev['lvdt']['post_end'] = lvdt_pts[0:4]
                         
-                        for d_val in ['D_Push', 'D_max', 'D_E3', 'skipped']:
+                        for d_val in ['D_Push', 'D_max', 'D_E3', 'D_E4', 'skipped']:
                             if d_val in results:
                                 try:
                                     ev[d_val] = results[d_val][i]
@@ -254,7 +254,7 @@ class DataManager:
                     ev['lvdt']['value'] = d.get('delta_lvdt', np.nan)
                     ev['lvdt']['pre_start'], ev['lvdt']['pre_end'], ev['lvdt']['post_start'], ev['lvdt']['post_end'] = lvdt_pts[0:4]
                     
-                    for k_val in ['D_Push', 'D_max', 'D_E3', 'skipped']:
+                    for k_val in ['D_Push', 'D_max', 'D_E3', 'D_E4', 'skipped']:
                         if k_val in d:
                             ev[k_val] = d[k_val]
                     if 'trigger_time' in d:

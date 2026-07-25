@@ -741,6 +741,7 @@ class LabquakeExplorer:
                         res.pop('D_Push', None)
                         res.pop('D_max', None)
                         res.pop('D_E3', None)
+                        res.pop('D_E4', None)
 
                     # category=None 表示直接寫入 events[ev_idx] 的根目錄，不建立 drop 資料夾
                     self.data_manager.fast_save_event_analysis(run_idx, ev_idx, None, res)

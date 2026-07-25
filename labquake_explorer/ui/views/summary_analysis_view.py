@@ -59,7 +59,7 @@ class SummaryAnalysisView(tk.Toplevel):
         # Load analysis results from events directly
         self.analysis = None
         self.results = {}
-        keys_to_extract = ['delta_tau', 'delta_mu', 'delta_lvdt', 'D_Push', 'D_max', 'D_E3', 'skipped', 'k']
+        keys_to_extract = ['delta_tau', 'delta_mu', 'delta_lvdt', 'D_Push', 'D_max', 'D_E3', 'D_E4', 'skipped', 'k']
         
         # Determine any dynamic keys (e.g., delta_E1) from the first available event
         for ev in self.events:
@@ -460,12 +460,15 @@ class SummaryAnalysisView(tk.Toplevel):
         # --- (6) D values ---
         if 'd_values' in self.axs_map:
             ax = self.axs_map['d_values']
+            d_keys_to_plot = [('D_Push', 'teal', r'$D_{Push}$'), ('D_max', 'coral', r'$D_{max}$')]
+            t_r_e4, vals_e4 = _get_analysis_in_range('D_E4')
+            if t_r_e4 is not None and len(t_r_e4) > 0 and np.any(~np.isnan(vals_e4)):
+                d_keys_to_plot.append(('D_E4', None, r'$D_{E4}$'))
+            else:
+                d_keys_to_plot.append(('D_E3', None, r'$D_{E3}$'))
+
             has_data = False
-            for key, color, label in [
-                ('D_Push', 'teal', r'$D_{Push}$'),
-                ('D_max', 'coral', r'$D_{max}$'),
-                ('D_E3', None, r'$D_{E3}$'),
-            ]:
+            for key, color, label in d_keys_to_plot:
                 t_r, vals = _get_analysis_in_range(key)
                 if t_r is not None and len(t_r) > 0:
                     valid = ~np.isnan(vals)

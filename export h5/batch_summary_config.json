@@ -1,0 +1,33 @@
+{
+  "settings": {
+    "FIG_WIDTH": 12.0,
+    "FIG_HEIGHT_PER_PLOT": 1.0,
+    "FONT_SIZE_LABEL": 18.0,
+    "FONT_SIZE_TICK": 12.0,
+    "LINE_WIDTH": 1.5,
+    "SHOW_LEGEND": true
+  },
+  "plots_to_show": [
+    "d_values"
+  ],
+  "runs_config": {
+    "C:\\experiment\\2D\\t0184\\t0184.h5": {
+      "run1_4MPa": {
+        "start": 1,
+        "end": 2
+      },
+      "run2_8MPa": {
+        "start": 7,
+        "end": 28
+      },
+      "run3_6MPa": {
+        "start": 1,
+        "end": 30
+      },
+      "run4_2MPa": {
+        "start": 1,
+        "end": 20
+      }
+    }
+  }
+}

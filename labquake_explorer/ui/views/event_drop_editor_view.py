@@ -690,6 +690,7 @@ class EventDropEditorView(tk.Toplevel):
             'D_Push': np.nan,
             'D_max': np.nan,
             'D_E3': np.nan,
+            'D_E4': np.nan,
         }
         
         eddy_keys = sorted([k for k in self.time_history.keys() if 'eddy' in k.lower()])

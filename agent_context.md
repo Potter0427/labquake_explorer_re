@@ -33,7 +33,7 @@ data['runs'][run_idx]['events'][event_idx]        # dict — single event (1-bas
   - `E1_value` … `E8_value` — slip drop (μm) for each Eddy sensor (1-based index, corresponding to `eddy_ch8` … `eddy_ch15` in order)
   - `pre_start`, `pre_end`, `post_start`, `post_end` — window boundaries used for the 2-pt trend calculation
 - `lvdt` — dict: `{value, pre_start, pre_end, post_start, post_end, smooth_w}`
-- `D_Push`, `D_max`, `D_E3` — inter-event displacement metrics (μm)
+- `D_Push`, `D_max`, `D_E3`, `D_E4` — inter-event displacement metrics (μm)
 - `k` — dict: `{value, start, end}` — pre-slip loading stiffness
 
 ## 3. Physical Sensor Layout & VW Zone
