@@ -8,7 +8,7 @@
     "SHOW_LEGEND": true
   },
   "plots_to_show": [
-    "d_values"
+    "slip"
   ],
   "runs_config": {
     "C:\\experiment\\2D\\t0184\\t0184.h5": {
@@ -21,7 +21,7 @@
         "end": 28
       },
       "run3_6MPa": {
-        "start": 1,
+        "start": 20,
         "end": 30
       },
       "run4_2MPa": {
